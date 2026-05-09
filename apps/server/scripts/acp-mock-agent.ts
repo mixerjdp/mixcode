@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-// @effect-diagnostics nodeBuiltinImport:off
 import { appendFileSync } from "node:fs";
 
 import * as Effect from "effect/Effect";

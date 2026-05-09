@@ -5,10 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { it, assert, vi } from "@effect/vitest";
 
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
-import * as Stream from "effect/Stream";
+import { Effect, Layer, PubSub, Stream } from "effect";
 
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";

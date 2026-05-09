@@ -1,9 +1,5 @@
 import { defaultInstanceIdForDriver, ProviderDriverKind, type ThreadId } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import { Effect, Layer, Option, Schema } from "effect";
 
 import type { ProviderSessionRuntime } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
@@ -14,7 +10,6 @@ import {
   type ProviderRuntimeBindingWithMetadata,
   type ProviderSessionDirectoryShape,
 } from "../Services/ProviderSessionDirectory.ts";
-const decodeProviderDriverKindValue = Schema.decodeUnknownEffect(ProviderDriverKind);
 
 function toPersistenceError(operation: string) {
   return (cause: unknown) =>
@@ -29,7 +24,7 @@ function decodeProviderDriverKind(
   providerName: string,
   operation: string,
 ): Effect.Effect<ProviderDriverKind, ProviderSessionDirectoryPersistenceError> {
-  return decodeProviderDriverKindValue(providerName).pipe(
+  return Schema.decodeUnknownEffect(ProviderDriverKind)(providerName).pipe(
     Effect.mapError(
       (cause) =>
         new ProviderSessionDirectoryPersistenceError({
@@ -115,7 +110,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       });
     }
 
-    const now = DateTime.formatIso(yield* DateTime.now);
+    const now = new Date().toISOString();
     const providerChanged =
       existingRuntime !== undefined && existingRuntime.providerName !== binding.provider;
     const providerInstanceId =

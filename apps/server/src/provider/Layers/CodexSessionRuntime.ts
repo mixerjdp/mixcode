@@ -17,17 +17,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
-import * as Queue from "effect/Queue";
-import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
-import * as Random from "effect/Random";
-import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
+import { Deferred, Effect, Exit, Layer, Queue, Ref, Scope, Random, Schema, Stream } from "effect";
 import * as SchemaIssue from "effect/SchemaIssue";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
@@ -41,7 +31,6 @@ import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
-const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -67,8 +56,6 @@ export const CodexResumeCursorSchema = Schema.Struct({
 const CodexUserInputAnswerObject = Schema.Struct({
   answers: Schema.Array(Schema.String),
 });
-const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
-const isCodexUserInputAnswerObject = Schema.is(CodexUserInputAnswerObject);
 
 // TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
 // `V2TurnStartParams` schema includes `collaborationMode` directly.
@@ -76,9 +63,6 @@ const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartP
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(EffectCodexSchema.V2TurnStartParams__CollaborationMode),
   }),
-);
-const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
-  CodexTurnStartParamsWithCollaborationMode,
 );
 
 export type CodexTurnStartParamsWithCollaborationMode =
@@ -254,7 +238,7 @@ function normalizeCodexModelSlug(
 function readResumeCursorThreadId(
   resumeCursor: ProviderSession["resumeCursor"],
 ): string | undefined {
-  return isCodexResumeCursorSchema(resumeCursor) ? resumeCursor.threadId : undefined;
+  return Schema.is(CodexResumeCursorSchema)(resumeCursor) ? resumeCursor.threadId : undefined;
 }
 
 function runtimeModeToThreadConfig(input: RuntimeMode): {
@@ -373,7 +357,7 @@ export function buildTurnStartParams(input: {
     ...(input.effort ? { effort: input.effort } : {}),
   });
 
-  return decodeCodexTurnStartParamsWithCollaborationMode({
+  return Schema.decodeUnknownEffect(CodexTurnStartParamsWithCollaborationMode)({
     threadId: input.threadId,
     input: turnInput,
     approvalPolicy: config.approvalPolicy,
@@ -629,7 +613,7 @@ function toCodexUserInputAnswer(
     const answers = value.filter((entry): entry is string => typeof entry === "string");
     return Effect.succeed({ answers });
   }
-  if (isCodexUserInputAnswerObject(value)) {
+  if (Schema.is(CodexUserInputAnswerObject)(value)) {
     return Effect.succeed({ answers: value.answers });
   }
   return Effect.fail(new CodexSessionRuntimeInvalidUserInputAnswersError({ questionId }));
@@ -669,14 +653,11 @@ function updateSession(
   sessionRef: Ref.Ref<ProviderSession>,
   updates: Partial<ProviderSession>,
 ): Effect.Effect<void> {
-  return Effect.gen(function* () {
-    const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* Ref.update(sessionRef, (session) => ({
-      ...session,
-      ...updates,
-      updatedAt,
-    }));
-  });
+  return Ref.update(sessionRef, (session) => ({
+    ...session,
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  }));
 }
 
 function parseThreadSnapshot(
@@ -743,9 +724,7 @@ export const makeCodexSessionRuntime = (
       Effect.provide(clientContext),
     );
     const serverNotifications = yield* Queue.unbounded<CodexServerNotification>();
-    const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-    const sessionCreatedAt = yield* nowIso;
     const initialSession = {
       provider: PROVIDER,
       ...(options.providerInstanceId ? { providerInstanceId: options.providerInstanceId } : {}),
@@ -755,23 +734,22 @@ export const makeCodexSessionRuntime = (
       ...(options.model ? { model: options.model } : {}),
       threadId: options.threadId,
       ...(options.resumeCursor !== undefined ? { resumeCursor: options.resumeCursor } : {}),
-      createdAt: sessionCreatedAt,
-      updatedAt: sessionCreatedAt,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     } satisfies ProviderSession;
     const sessionRef = yield* Ref.make<ProviderSession>(initialSession);
     const offerEvent = (event: ProviderEvent) => Queue.offer(events, event).pipe(Effect.asVoid);
 
     const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
-      Effect.gen(function* () {
-        const id = yield* Random.nextUUIDv4;
-        return yield* offerEvent({
+      Effect.flatMap(Random.nextUUIDv4, (id) =>
+        offerEvent({
           id: EventId.make(id),
           provider: PROVIDER,
           ...(options.providerInstanceId ? { providerInstanceId: options.providerInstanceId } : {}),
-          createdAt: yield* nowIso,
+          createdAt: new Date().toISOString(),
           ...event,
-        });
-      });
+        }),
+      );
     const emitSessionEvent = (method: string, message: string) =>
       emitEvent({
         kind: "session",
@@ -1199,7 +1177,7 @@ export const makeCodexSessionRuntime = (
         cwd: opened.cwd,
         model: opened.model,
         resumeCursor: { threadId: providerThreadId },
-        updatedAt: yield* nowIso,
+        updatedAt: new Date().toISOString(),
       } satisfies ProviderSession;
       yield* Ref.set(sessionRef, session);
       yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
@@ -1253,7 +1231,9 @@ export const makeCodexSessionRuntime = (
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
-          const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
+          const response = yield* Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse)(
+            rawResponse,
+          ).pipe(
             Effect.mapError((error) =>
               toProtocolParseError("Invalid turn/start response payload", error),
             ),

@@ -1,13 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import { realpathSync } from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
+import { Duration, Effect, FileSystem, Layer } from "effect";
+import { TestClock } from "effect/testing";
 
 import { runProcess } from "../../processRunner.ts";
 import { RepositoryIdentityResolver } from "../Services/RepositoryIdentityResolver.ts";

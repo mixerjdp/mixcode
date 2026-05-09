@@ -1,8 +1,7 @@
 "use client";
 
 import { useMemo, type ReactNode } from "react";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import { Schema } from "effect";
 import type {
   ProviderSettingsFormAnnotation,
   ProviderSettingsFormControl,
@@ -64,9 +63,12 @@ function readProviderSettingsFormSchemaAnnotation(
 function readFieldBooleanDefault(
   fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
 ): boolean | undefined {
-  const decodeDefault = Schema.decodeUnknownOption(fieldSchema as Schema.Decoder<unknown>);
-  const decoded = decodeDefault(undefined);
-  return Option.isSome(decoded) && typeof decoded.value === "boolean" ? decoded.value : undefined;
+  try {
+    const decoded = Schema.decodeUnknownSync(fieldSchema as Schema.Decoder<unknown>)(undefined);
+    return typeof decoded === "boolean" ? decoded : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function deriveProviderSettingsFields(

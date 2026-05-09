@@ -1,6 +1,5 @@
-import * as NodeOS from "node:os";
-import * as Effect from "effect/Effect";
-import * as Path from "effect/Path";
+import * as OS from "node:os";
+import { Effect, Path } from "effect";
 import {
   readPathFromLoginShell,
   readEnvironmentFromWindowsShell,
@@ -18,9 +17,7 @@ type WindowsCommandAvailabilityChecker = (
 ) => boolean;
 
 function logPathHydrationWarning(message: string, error?: unknown): void {
-  process.stderr.write(
-    `[server] ${message} ${error instanceof Error ? error.message : (error ?? "")}\n`,
-  );
+  console.warn(`[server] ${message}`, error instanceof Error ? error.message : (error ?? ""));
 }
 
 export function fixPath(
@@ -87,10 +84,10 @@ export function fixPath(
 export const expandHomePath = Effect.fn(function* (input: string) {
   const { join } = yield* Path.Path;
   if (input === "~") {
-    return NodeOS.homedir();
+    return OS.homedir();
   }
   if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return join(NodeOS.homedir(), input.slice(2));
+    return join(OS.homedir(), input.slice(2));
   }
   return input;
 });
@@ -98,7 +95,7 @@ export const expandHomePath = Effect.fn(function* (input: string) {
 export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
   const { join, resolve } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return join(NodeOS.homedir(), ".t3");
+    return join(OS.homedir(), ".t3");
   }
   return resolve(yield* expandHomePath(raw.trim()));
 });

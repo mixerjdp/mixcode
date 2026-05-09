@@ -1,11 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
+import { Effect } from "effect";
 
 import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 

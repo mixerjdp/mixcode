@@ -9,7 +9,7 @@ import {
   type OrchestrationReadModel,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
+import { Effect } from "effect";
 
 import {
   findThreadById,
@@ -19,7 +19,7 @@ import {
   requireThreadAbsent,
 } from "./commandInvariants.ts";
 
-const now = "2026-01-01T00:00:00.000Z";
+const now = new Date().toISOString();
 
 const readModel: OrchestrationReadModel = {
   snapshotSequence: 2,

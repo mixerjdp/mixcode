@@ -1,12 +1,6 @@
 import type { AuthPairingLink } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
-import * as Option from "effect/Option";
+import { DateTime, Duration, Effect, Layer, PubSub, Ref, Stream } from "effect";
+import { Option } from "effect";
 
 import { ServerConfig } from "../../config.ts";
 import { AuthPairingLinkRepositoryLive } from "../../persistence/Layers/AuthPairingLinks.ts";

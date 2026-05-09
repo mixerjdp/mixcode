@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
 /**
  * Provider event logger helper.
  *
@@ -11,11 +10,7 @@ import path from "node:path";
 
 import type { ThreadId } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Logger from "effect/Logger";
-import * as Scope from "effect/Scope";
-import * as SynchronizedRef from "effect/SynchronizedRef";
+import { Effect, Exit, Logger, Scope, SynchronizedRef } from "effect";
 
 import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 

@@ -24,11 +24,14 @@ import {
   BotIcon,
   CheckIcon,
   CircleAlertIcon,
+  ChevronRightIcon,
+  CopyIcon,
   EyeIcon,
   GlobeIcon,
   HammerIcon,
   type LucideIcon,
   SquarePenIcon,
+  SparklesIcon,
   TerminalIcon,
   Undo2Icon,
   WrenchIcon,
@@ -40,12 +43,18 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import {
+  buildWorkEntryDisclosureText,
+  buildWorkEntrySummaryPreview,
   computeStableMessagesTimelineRows,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
   deriveMessagesTimelineRows,
+  humanizeCompactToolLabel,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  shouldShowCommandOutputDisclosure,
+  summarizeToolDetailPreview,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
@@ -365,24 +374,24 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         )}
-        <CollapsibleUserMessageBody
-          text={displayedUserMessage.visibleText}
-          terminalContexts={terminalContexts}
-          skills={ctx.skills}
-          footer={
-            <>
-              <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                {displayedUserMessage.copyText && (
-                  <MessageCopyButton text={displayedUserMessage.copyText} />
-                )}
-                {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
-              </div>
-              <p className="text-right text-xs text-muted-foreground/50">
-                {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
-              </p>
-            </>
-          }
-        />
+        {(displayedUserMessage.visibleText.trim().length > 0 || terminalContexts.length > 0) && (
+          <UserMessageBody
+            text={displayedUserMessage.visibleText}
+            terminalContexts={terminalContexts}
+            skills={ctx.skills}
+          />
+        )}
+        <div className="mt-1.5 flex items-center justify-end gap-2">
+          <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+            {displayedUserMessage.copyText && (
+              <MessageCopyButton text={displayedUserMessage.copyText} />
+            )}
+            {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
+          </div>
+          <p className="text-right text-xs text-muted-foreground/50">
+            {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -755,88 +764,6 @@ const UserMessageTerminalContextInlineLabel = memo(
   },
 );
 
-const MAX_COLLAPSED_USER_MESSAGE_LINES = 8;
-const MAX_COLLAPSED_USER_MESSAGE_LENGTH = 600;
-const COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM = 1.75;
-const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(100% - ${COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM}rem), transparent)`;
-
-function shouldCollapseUserMessage(text: string): boolean {
-  if (text.trim().length === 0) {
-    return false;
-  }
-
-  return (
-    text.length > MAX_COLLAPSED_USER_MESSAGE_LENGTH ||
-    text.split("\n").length > MAX_COLLAPSED_USER_MESSAGE_LINES
-  );
-}
-
-const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
-  text: string;
-  terminalContexts: ParsedTerminalContextEntry[];
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
-  footer?: ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const hasVisibleBody = props.text.trim().length > 0 || props.terminalContexts.length > 0;
-  const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
-  const isCollapsed = canCollapse && !expanded;
-
-  return (
-    <div>
-      {hasVisibleBody ? (
-        <div
-          className={cn("relative", isCollapsed && "max-h-44 overflow-hidden")}
-          data-user-message-body="true"
-          data-user-message-collapsed={isCollapsed ? "true" : "false"}
-          data-user-message-collapsible={canCollapse ? "true" : "false"}
-          data-user-message-fade={isCollapsed ? "true" : "false"}
-          style={
-            isCollapsed
-              ? {
-                  WebkitMaskImage: COLLAPSED_USER_MESSAGE_FADE_MASK,
-                  maskImage: COLLAPSED_USER_MESSAGE_FADE_MASK,
-                }
-              : undefined
-          }
-        >
-          <UserMessageBody
-            text={props.text}
-            terminalContexts={props.terminalContexts}
-            skills={props.skills}
-          />
-        </div>
-      ) : null}
-      {canCollapse || props.footer ? (
-        <div
-          className={cn(
-            "mt-1.5 flex items-center gap-2",
-            canCollapse && props.footer ? "justify-between" : "justify-end",
-          )}
-          data-user-message-footer="true"
-        >
-          {canCollapse ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              aria-expanded={expanded}
-              data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
-              className="-ml-1 h-6 rounded-md px-1.5 text-xs text-muted-foreground/72 hover:bg-muted/55 hover:text-foreground/85"
-            >
-              {expanded ? "Show less" : "Show full message"}
-            </Button>
-          ) : null}
-          {props.footer ? (
-            <div className="ml-auto flex items-center gap-2">{props.footer}</div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-});
-
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
@@ -1039,32 +966,8 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   return "text-muted-foreground/40";
 }
 
-function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
-  workspaceRoot: string | undefined,
-) {
-  if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
-  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
-  const [firstPath] = workEntry.changedFiles ?? [];
-  if (!firstPath) return null;
-  const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
-  return workEntry.changedFiles!.length === 1
-    ? displayPath
-    : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
-}
-
-function workEntryRawCommand(
-  workEntry: Pick<TimelineWorkEntry, "command" | "rawCommand">,
-): string | null {
-  const rawCommand = workEntry.rawCommand?.trim();
-  if (!rawCommand || !workEntry.command) {
-    return null;
-  }
-  return rawCommand === workEntry.command.trim() ? null : rawCommand;
-}
-
 function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
+  if (workEntry.activityKind === "task.progress") return SparklesIcon;
   if (workEntry.requestKind === "command") return TerminalIcon;
   if (workEntry.requestKind === "file-read") return EyeIcon;
   if (workEntry.requestKind === "file-change") return SquarePenIcon;
@@ -1089,19 +992,22 @@ function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
   return workToneIcon(workEntry.tone).icon;
 }
 
-function capitalizePhrase(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return value;
-  }
-  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+function isCommandWorkEntry(workEntry: TimelineWorkEntry): boolean {
+  return (
+    workEntry.requestKind === "command" ||
+    workEntry.itemType === "command_execution" ||
+    Boolean(workEntry.command)
+  );
 }
 
 function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
-  if (!workEntry.toolTitle) {
-    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
+  if (workEntry.activityKind === "task.progress") {
+    return "Reasoning";
   }
-  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
+  if (isCommandWorkEntry(workEntry)) {
+    return "Shell";
+  }
+  return humanizeCompactToolLabel(workEntry.toolTitle ?? workEntry.label);
 }
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
@@ -1109,20 +1015,49 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  const [isExpanded, setIsExpanded] = useState(false);
+  const { copyToClipboard, isCopied } = useCopyToClipboard<void>();
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
-  const rawPreview = workEntryPreview(workEntry, workspaceRoot);
+  const isReasoningEntry = workEntry.activityKind === "task.progress";
+  const rawPreview = buildWorkEntrySummaryPreview(workEntry, {
+    formatFilePath: (path) => formatWorkspaceRelativePath(path, workspaceRoot),
+  });
+  const isCommandEntry = isCommandWorkEntry(workEntry);
+  const disclosureText = buildWorkEntryDisclosureText(workEntry, {
+    formatFilePath: (path) => formatWorkspaceRelativePath(path, workspaceRoot),
+  });
+  const canRevealDisclosure =
+    disclosureText !== null && shouldShowCommandOutputDisclosure(workEntry.createdAt);
   const preview =
-    rawPreview &&
-    normalizeCompactToolLabel(rawPreview).toLowerCase() ===
-      normalizeCompactToolLabel(heading).toLowerCase()
+    !isCommandEntry && workEntry.detail && workEntry.detail.length > 0
+      ? (summarizeToolDetailPreview(workEntry.detail) ?? rawPreview)
+      : !isCommandEntry
+        ? rawPreview
+        : null;
+  const summaryPreview = isCommandEntry
+    ? rawPreview
+    : preview &&
+        normalizeCompactToolLabel(preview).toLowerCase() ===
+          normalizeCompactToolLabel(heading).toLowerCase()
       ? null
-      : rawPreview;
-  const rawCommand = workEntryRawCommand(workEntry);
-  const displayText = preview ? `${heading} - ${preview}` : heading;
+      : preview;
+  const displayText = summaryPreview ? `${heading} - ${summaryPreview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+  const disclosureId = `work-entry-output:${workEntry.id}`;
+  const disclosureLabel = isCommandEntry ? "Shell" : heading;
+  const copyDisclosureLabel = isCommandEntry
+    ? "Copiar comando y salida"
+    : isReasoningEntry
+      ? "Copiar razonamiento"
+      : "Copiar salida";
+  const copyCommand = () => {
+    if (disclosureText) {
+      copyToClipboard(disclosureText, undefined);
+    }
+  };
 
   return (
     <div className="rounded-lg px-1 py-1">
@@ -1133,43 +1068,65 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           <EntryIcon className="size-3" />
         </span>
         <div className="min-w-0 flex-1 overflow-hidden">
-          {rawCommand ? (
+          {canRevealDisclosure ? (
             <div className="max-w-full">
-              <p
-                className={cn(
-                  "truncate text-xs leading-5",
-                  workToneClass(workEntry.tone),
-                  preview ? "text-muted-foreground/70" : "",
-                )}
-                title={displayText}
+              <button
+                type="button"
+                className="flex w-full items-center gap-1 text-left transition-colors duration-150 cursor-pointer"
+                aria-expanded={isExpanded}
+                aria-controls={disclosureId}
+                onClick={() => setIsExpanded((value) => !value)}
               >
-                <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                  {heading}
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 truncate text-xs leading-5",
+                    workToneClass(workEntry.tone),
+                  )}
+                  title={displayText}
+                >
+                  <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
+                    {heading}
+                  </span>
+                  {summaryPreview && (
+                    <span className="text-muted-foreground/55"> - {summaryPreview}</span>
+                  )}
                 </span>
-                {preview && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      closeDelay={0}
-                      delay={75}
-                      render={
-                        <span className="max-w-full cursor-default text-muted-foreground/55 transition-colors hover:text-muted-foreground/75 focus-visible:text-muted-foreground/75">
-                          {" "}
-                          - {preview}
-                        </span>
-                      }
-                    />
-                    <TooltipPopup
-                      align="start"
-                      className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
-                      side="top"
+                <ChevronRightIcon
+                  className={cn(
+                    "size-3 shrink-0 text-muted-foreground/65 transition-transform duration-150",
+                    isExpanded ? "rotate-90" : null,
+                  )}
+                />
+              </button>
+              {isExpanded ? (
+                <div
+                  id={disclosureId}
+                  className="mt-1.5 rounded-lg border border-border/55 bg-background/75 px-2.5 py-2"
+                >
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55">
+                      {disclosureLabel}
+                    </p>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-full border border-border/55 bg-background/80 px-2 py-1 text-[10px] text-foreground/80 transition-colors hover:bg-background"
+                      onClick={copyCommand}
+                      aria-label={copyDisclosureLabel}
+                      title={copyDisclosureLabel}
                     >
-                      <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
-                        {rawCommand}
-                      </div>
-                    </TooltipPopup>
-                  </Tooltip>
-                )}
-              </p>
+                      {isCopied ? (
+                        <CheckIcon className="size-3 text-success" />
+                      ) : (
+                        <CopyIcon className="size-3" />
+                      )}
+                      <span>{copyDisclosureLabel}</span>
+                    </button>
+                  </div>
+                  <div className="max-h-72 overflow-auto rounded-md bg-muted/20 px-2 py-1.5 font-mono text-[11px] leading-4 whitespace-pre-wrap break-words text-foreground/90">
+                    {disclosureText}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : (
             <Tooltip>

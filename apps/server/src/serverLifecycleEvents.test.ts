@@ -1,8 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { assertTrue } from "@effect/vitest/utils";
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
+import { Effect, Option } from "effect";
 
 import { ServerLifecycleEvents, ServerLifecycleEventsLive } from "./serverLifecycleEvents.ts";
 
@@ -38,7 +37,7 @@ it.effect(
           version: 1,
           type: "ready",
           payload: {
-            at: "2026-01-01T00:00:00.000Z",
+            at: new Date().toISOString(),
             environment,
           },
         })

@@ -4,13 +4,9 @@ import {
   type OpenCodeSettings,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
-import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
+import { Cause, Data, Effect } from "effect";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   buildServerProvider,
   nonEmptyTrimmed,
@@ -18,6 +14,7 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { compareCliVersions } from "../cliVersion.ts";
 import {
   OpenCodeRuntime,
   openCodeRuntimeErrorDetail,
@@ -252,38 +249,19 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
 
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,
-): Effect.Effect<ServerProviderDraft> =>
-  Effect.gen(function* () {
-    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = providerModelsFromSettings(
-      [],
-      PROVIDER,
-      openCodeSettings.customModels,
-      DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-    );
+): ServerProviderDraft => {
+  const checkedAt = new Date().toISOString();
+  const models = providerModelsFromSettings(
+    [],
+    PROVIDER,
+    openCodeSettings.customModels,
+    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+  );
 
-    if (!openCodeSettings.enabled) {
-      return buildServerProvider({
-        presentation: OPENCODE_PRESENTATION,
-        enabled: false,
-        checkedAt,
-        models,
-        probe: {
-          installed: false,
-          version: null,
-          status: "warning",
-          auth: { status: "unknown" },
-          message:
-            openCodeSettings.serverUrl.trim().length > 0
-              ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
-              : "OpenCode is disabled in T3 Code settings.",
-        },
-      });
-    }
-
+  if (!openCodeSettings.enabled) {
     return buildServerProvider({
       presentation: OPENCODE_PRESENTATION,
-      enabled: true,
+      enabled: false,
       checkedAt,
       models,
       probe: {
@@ -291,10 +269,28 @@ export const makePendingOpenCodeProvider = (
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "OpenCode provider status has not been checked in this session yet.",
+        message:
+          openCodeSettings.serverUrl.trim().length > 0
+            ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
+            : "OpenCode is disabled in T3 Code settings.",
       },
     });
+  }
+
+  return buildServerProvider({
+    presentation: OPENCODE_PRESENTATION,
+    enabled: true,
+    checkedAt,
+    models,
+    probe: {
+      installed: false,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "OpenCode provider status has not been checked in this session yet.",
+    },
   });
+};
 
 export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(function* (
   openCodeSettings: OpenCodeSettings,
@@ -302,7 +298,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   environment: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
   const openCodeRuntime = yield* OpenCodeRuntime;
-  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const checkedAt = new Date().toISOString();
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
 
@@ -383,7 +379,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         null,
       );
     }
-    if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
+    if (compareCliVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
       return buildServerProvider({
         presentation: OPENCODE_PRESENTATION,
         enabled: openCodeSettings.enabled,

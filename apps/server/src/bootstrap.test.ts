@@ -1,15 +1,13 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import * as NFS from "node:fs";
 import * as path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as FileSystem from "effect/FileSystem";
-import * as Schema from "effect/Schema";
+import { FileSystem, Schema } from "effect";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as TestClock from "effect/testing/TestClock";
+import { TestClock } from "effect/testing";
 import { vi } from "vitest";
 
 import { readBootstrapEnvelope, resolveFdPath } from "./bootstrap.ts";
@@ -38,7 +36,6 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 const TestEnvelopeSchema = Schema.Struct({ mode: Schema.String });
-const encodeTestEnvelopeSchema = Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema));
 
 it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
   it.effect("uses platform-specific fd paths", () =>
@@ -56,7 +53,9 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       yield* fs.writeFileString(
         filePath,
-        `${yield* encodeTestEnvelopeSchema({ mode: "desktop" })}\n`,
+        `${yield* Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema))({
+          mode: "desktop",
+        })}\n`,
       );
 
       const fd = yield* Effect.acquireRelease(
@@ -78,7 +77,9 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       yield* fs.writeFileString(
         filePath,
-        `${yield* encodeTestEnvelopeSchema({ mode: "desktop" })}\n`,
+        `${yield* Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema))({
+          mode: "desktop",
+        })}\n`,
       );
 
       // Open without acquireRelease: the direct-stream fallback uses autoClose: true,

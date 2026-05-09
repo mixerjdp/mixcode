@@ -17,8 +17,6 @@ import {
 } from "./_internal/shared.ts";
 import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
 
-const DEFAULT_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
-
 export interface CodexAppServerClientOptions {
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
@@ -275,24 +273,26 @@ export const layerCommand = (
 > =>
   Layer.effect(
     CodexAppServerClient,
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const command = ChildProcess.make(options.command, [...(options.args ?? [])], {
-        ...(options.cwd ? { cwd: options.cwd } : {}),
-        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
-        forceKillAfter: DEFAULT_APP_SERVER_FORCE_KILL_AFTER,
-        shell: process.platform === "win32",
-      });
-      return yield* spawner.spawn(command).pipe(
-        Effect.mapError(
-          (cause) =>
-            new CodexError.CodexAppServerSpawnError({
-              command: [options.command, ...(options.args ?? [])].join(" "),
-              cause,
-            }),
-        ),
-      );
-    }).pipe(
+    Effect.acquireRelease(
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const command = ChildProcess.make(options.command, [...(options.args ?? [])], {
+          ...(options.cwd ? { cwd: options.cwd } : {}),
+          ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+          shell: process.platform === "win32",
+        });
+        return yield* spawner.spawn(command).pipe(
+          Effect.mapError(
+            (cause) =>
+              new CodexError.CodexAppServerSpawnError({
+                command: [options.command, ...(options.args ?? [])].join(" "),
+                cause,
+              }),
+          ),
+        );
+      }),
+      (handle) => handle.kill().pipe(Effect.orDie),
+    ).pipe(
       Effect.flatMap((handle) =>
         make(makeChildStdio(handle), options, makeTerminationError(handle)),
       ),

@@ -1,7 +1,6 @@
 import * as OS from "node:os";
 
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import { Effect, FileSystem } from "effect";
 
 import { runProcess } from "../../processRunner.ts";
 

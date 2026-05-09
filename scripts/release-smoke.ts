@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import { execFileSync } from "node:child_process";
 import {
   cpSync,
@@ -12,8 +11,6 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import * as Console from "effect/Console";
-import * as Effect from "effect/Effect";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -24,7 +21,6 @@ const workspaceFiles = [
   "apps/desktop/package.json",
   "apps/web/package.json",
   "apps/marketing/package.json",
-  "oxlint-plugin-t3code/package.json",
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
   "packages/shared/package.json",
@@ -393,7 +389,7 @@ try {
     "Windows release smoke unexpectedly removed the x64 builder debug fixture.",
   );
 
-  Effect.runSync(Console.log("Release smoke checks passed."));
+  console.log("Release smoke checks passed.");
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });
 }

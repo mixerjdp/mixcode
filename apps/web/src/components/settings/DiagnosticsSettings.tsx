@@ -9,8 +9,7 @@ import {
 } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { ServerProcessDiagnosticsEntry, ServerProcessSignal } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
+import { DateTime, Option } from "effect";
 
 import { ensureLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";

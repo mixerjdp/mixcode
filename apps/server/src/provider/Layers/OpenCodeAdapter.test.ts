@@ -1,16 +1,8 @@
 import assert from "node:assert/strict";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
+import { Context, Effect, Exit, Fiber, Layer, Option, Schema, Scope, Stream } from "effect";
 import { beforeEach } from "vitest";
 
 import {
@@ -224,8 +216,8 @@ beforeEach(() => {
   runtimeMock.reset();
 });
 
-const advanceTestClock = (ms: number) =>
-  TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
+const sleep = (ms: number) =>
+  Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
@@ -559,98 +551,17 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("appends raw assistant text deltas and reconciles part update snapshots", () =>
+  it.effect("deduplicates overlapping assistant text deltas after part updates", () =>
     Effect.sync(() => {
       const firstUpdate = mergeOpenCodeAssistantText(undefined, "Hello");
       const overlapDelta = appendOpenCodeAssistantTextDelta(firstUpdate.latestText, "lo world");
-      const secondUpdate = mergeOpenCodeAssistantText(overlapDelta.nextText, "Hellolo world");
+      const secondUpdate = mergeOpenCodeAssistantText(overlapDelta.nextText, "Hello world!");
 
       assert.deepEqual(
         [firstUpdate.deltaToEmit, overlapDelta.deltaToEmit, secondUpdate.deltaToEmit],
-        ["Hello", "lo world", ""],
+        ["Hello", " world", "!"],
       );
-      assert.equal(secondUpdate.latestText, "Hellolo world");
-    }),
-  );
-
-  it.effect("does not strip coincidental prefix overlap from OpenCode part deltas", () =>
-    Effect.gen(function* () {
-      const adapter = yield* OpenCodeAdapter;
-      const threadId = asThreadId("thread-opencode-raw-delta");
-      const part = {
-        id: "part-raw-delta",
-        sessionID: "http://127.0.0.1:9999/session",
-        messageID: "msg-raw-delta",
-        type: "text",
-        text: "A B",
-        time: { start: 1 },
-      };
-      runtimeMock.state.subscribedEvents = [
-        {
-          type: "message.updated",
-          properties: {
-            sessionID: "http://127.0.0.1:9999/session",
-            info: {
-              id: "msg-raw-delta",
-              role: "assistant",
-            },
-          },
-        },
-        {
-          type: "message.part.updated",
-          properties: {
-            sessionID: "http://127.0.0.1:9999/session",
-            part,
-            time: 1,
-          },
-        },
-        {
-          type: "message.part.delta",
-          properties: {
-            sessionID: "http://127.0.0.1:9999/session",
-            messageID: "msg-raw-delta",
-            partID: "part-raw-delta",
-            field: "text",
-            delta: "Bonus",
-          },
-        },
-        {
-          type: "message.part.updated",
-          properties: {
-            sessionID: "http://127.0.0.1:9999/session",
-            part: {
-              ...part,
-              text: "A BBonus",
-              time: { start: 1, end: 2 },
-            },
-            time: 2,
-          },
-        },
-      ];
-      const eventsFiber = yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.threadId === threadId),
-        Stream.take(5),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-
-      yield* adapter.startSession({
-        provider: ProviderDriverKind.make("opencode"),
-        threadId,
-        runtimeMode: "full-access",
-      });
-
-      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
-      const deltas = events.filter((event) => event.type === "content.delta");
-      assert.deepEqual(
-        deltas.map((event) => (event.type === "content.delta" ? event.payload.delta : "")),
-        ["A B", "Bonus"],
-      );
-      assert.equal(events.at(-1)?.type, "item.completed");
-      const completed = events.at(-1);
-      if (completed?.type === "item.completed") {
-        assert.equal(completed.payload.detail, "A BBonus");
-      }
+      assert.equal(secondUpdate.latestText, "Hello world!");
     }),
   );
 
@@ -737,7 +648,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           threadId: asThreadId("thread-native-log"),
           runtimeMode: "full-access",
         });
-        yield* advanceTestClock(10);
+        yield* sleep(10);
         return started;
       }).pipe(Effect.provide(adapterLayer));
 
@@ -825,7 +736,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           threadId: asThreadId("thread-native-log-failure"),
           runtimeMode: "full-access",
         });
-        yield* advanceTestClock(10);
+        yield* sleep(10);
         return {
           sessions: yield* adapter.listSessions(),
           closeCallsDuringRun: [...runtimeMock.state.closeCalls],

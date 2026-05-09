@@ -5,20 +5,20 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
-import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
-import * as Queue from "effect/Queue";
-import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
+import {
+  Cause,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Metric,
+  Option,
+  PubSub,
+  Queue,
+  Schema,
+  Stream,
+} from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
@@ -44,10 +44,6 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
-const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
-  OrchestrationCommandPreviouslyRejectedError,
-);
-const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvariantError);
 
 interface CommandEnvelope {
   command: OrchestrationCommand;
@@ -82,8 +78,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
-  const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  let commandReadModel = createEmptyReadModel(yield* nowIso);
+  let commandReadModel = createEmptyReadModel(new Date().toISOString());
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
@@ -102,7 +97,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
     const dispatchStartSequence = commandReadModel.snapshotSequence;
-    let processingStartedAtMs = 0;
+    const processingStartedAtMs = Date.now();
     const aggregateRef = commandToAggregateRef(envelope.command);
     const baseMetricAttributes = {
       commandType: envelope.command.type,
@@ -125,7 +120,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
     return Effect.exit(
       Effect.gen(function* () {
-        processingStartedAtMs = yield* Clock.currentTimeMillis;
         yield* Effect.annotateCurrentSpan({
           "orchestration.command_id": envelope.command.commandId,
           "orchestration.command_type": envelope.command.type,
@@ -211,7 +205,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   ackEventType: event.type,
                 }),
               ),
-              Duration.millis(Math.max(0, (yield* Clock.currentTimeMillis) - envelope.startedAtMs)),
+              Duration.millis(Math.max(0, Date.now() - envelope.startedAtMs)),
             );
           }
         }
@@ -230,7 +224,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               orchestrationCommandDuration,
               metricAttributes(baseMetricAttributes),
             ),
-            Duration.millis(Math.max(0, (yield* Clock.currentTimeMillis) - processingStartedAtMs)),
+            Duration.millis(Math.max(0, Date.now() - processingStartedAtMs)),
           );
           yield* Metric.update(
             Metric.withAttributes(
@@ -249,7 +243,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           }
 
           const error = Cause.squash(exit.cause) as OrchestrationDispatchError;
-          if (!isOrchestrationCommandPreviouslyRejectedError(error)) {
+          if (!Schema.is(OrchestrationCommandPreviouslyRejectedError)(error)) {
             yield* reconcileReadModelAfterDispatchFailure.pipe(
               Effect.catch(() =>
                 Effect.logWarning(
@@ -263,13 +257,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               ),
             );
 
-            if (isOrchestrationCommandInvariantError(error)) {
+            if (Schema.is(OrchestrationCommandInvariantError)(error)) {
               yield* commandReceiptRepository
                 .upsert({
                   commandId: envelope.command.commandId,
                   aggregateKind: aggregateRef.aggregateKind,
                   aggregateId: aggregateRef.aggregateId,
-                  acceptedAt: yield* nowIso,
+                  acceptedAt: new Date().toISOString(),
                   resultSequence: commandReadModel.snapshotSequence,
                   status: "rejected",
                   error: error.message,
@@ -299,11 +293,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
-      yield* Queue.offer(commandQueue, {
-        command,
-        result,
-        startedAtMs: yield* Clock.currentTimeMillis,
-      });
+      yield* Queue.offer(commandQueue, { command, result, startedAtMs: Date.now() });
       return yield* Deferred.await(result);
     });
 

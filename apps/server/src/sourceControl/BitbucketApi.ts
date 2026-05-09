@@ -1,10 +1,4 @@
-import * as Config from "effect/Config";
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import { Config, Context, Effect, FileSystem, Layer, Option, Schema } from "effect";
 import {
   TrimmedNonEmptyString,
   type SourceControlProviderAuth,
@@ -44,7 +38,6 @@ export class BitbucketApiError extends Schema.TaggedErrorClass<BitbucketApiError
     return `Bitbucket API failed in ${this.operation}: ${this.detail}`;
   }
 }
-const isBitbucketApiErrorValue = Schema.is(BitbucketApiError);
 
 const RawBitbucketRepositorySchema = Schema.Struct({
   full_name: TrimmedNonEmptyString,
@@ -351,7 +344,7 @@ function requestError(operation: string, cause: unknown): BitbucketApiError {
 }
 
 function isBitbucketApiError(cause: unknown): cause is BitbucketApiError {
-  return isBitbucketApiErrorValue(cause);
+  return Schema.is(BitbucketApiError)(cause);
 }
 
 function responseError(

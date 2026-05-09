@@ -4,11 +4,7 @@ import type {
   AuthPairingLink,
   AuthSessionId,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
-import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Context from "effect/Context";
+import { Data, DateTime, Duration, Effect, Context } from "effect";
 import type { SessionRole } from "./SessionCredentialService.ts";
 
 export const DEFAULT_SESSION_SUBJECT = "cli-issued-session";

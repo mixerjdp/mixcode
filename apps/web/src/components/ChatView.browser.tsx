@@ -18,13 +18,11 @@ import {
   WS_METHODS,
   OrchestrationSessionStatus,
   DEFAULT_SERVER_SETTINGS,
-  ServerConfig as ServerConfigSchema,
 } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import { Option } from "effect";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
 import { page } from "vitest/browser";
@@ -108,7 +106,6 @@ const rpcHarness = new BrowserWsRpcHarness();
 const wsRequests = rpcHarness.requests;
 let customWsRpcResolver: ((body: NormalizedWsRpcRequestBody) => unknown | undefined) | null = null;
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
-const encodeServerConfig = Schema.encodeSync(ServerConfigSchema);
 
 interface ViewportSpec {
   name: string;
@@ -221,9 +218,6 @@ function createMockEnvironmentApi(input: {
       getFullThreadDiff: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["orchestration"]["getFullThreadDiff"],
-      getArchivedShellSnapshot: (() => {
-        throw new Error("Not implemented in browser test.");
-      }) as EnvironmentApi["orchestration"]["getArchivedShellSnapshot"],
       subscribeShell: (() => () => undefined) as EnvironmentApi["orchestration"]["subscribeShell"],
       subscribeThread: (() => () =>
         undefined) as EnvironmentApi["orchestration"]["subscribeThread"],
@@ -958,7 +952,7 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
   }
   const tag = body._tag;
   if (tag === WS_METHODS.serverGetConfig) {
-    return encodeServerConfig(fixture.serverConfig);
+    return fixture.serverConfig;
   }
   if (tag === WS_METHODS.serverDiscoverSourceControl) {
     return {
@@ -1665,7 +1659,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             {
               version: 1,
               type: "snapshot",
-              config: encodeServerConfig(fixture.serverConfig),
+              config: fixture.serverConfig,
             },
           ];
         }

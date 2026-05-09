@@ -1,18 +1,20 @@
 import { randomUUID } from "node:crypto";
 
-import * as Arr from "effect/Array";
-import * as Cache from "effect/Cache";
-import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Order from "effect/Order";
-import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
+import {
+  Array as Arr,
+  Cache,
+  Context,
+  DateTime,
+  Duration,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Order,
+  Path,
+  Ref,
+} from "effect";
 import {
   GitActionProgressEvent,
   GitActionProgressPhase,

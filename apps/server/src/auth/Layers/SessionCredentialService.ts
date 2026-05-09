@@ -1,14 +1,6 @@
 import { AuthSessionId, type AuthClientMetadata, type AuthClientSession } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
-import * as Option from "effect/Option";
+import { Clock, DateTime, Duration, Effect, Layer, PubSub, Ref, Schema, Stream } from "effect";
+import { Option } from "effect";
 
 import { ServerConfig } from "../../config.ts";
 import { AuthSessionRepositoryLive } from "../../persistence/Layers/AuthSessions.ts";
@@ -200,7 +192,6 @@ export const makeSessionCredentialService = Effect.gen(function* () {
       ),
     );
 
-  const encodeClaims = Schema.encodeEffect(Schema.fromJsonString(SessionClaims));
   const issue: SessionCredentialServiceShape["issue"] = (input) =>
     Effect.gen(function* () {
       const sessionId = AuthSessionId.make(crypto.randomUUID());
@@ -218,13 +209,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       };
-
-      const encodedPayload = yield* encodeClaims(claims).pipe(
-        Effect.map(base64UrlEncode),
-        Effect.mapError(
-          (cause) => new SessionCredentialError({ message: "Failed to encode claims", cause }),
-        ),
-      );
+      const encodedPayload = base64UrlEncode(JSON.stringify(claims));
       const signature = signPayload(encodedPayload, signingSecret);
       const client = input?.client ?? createDefaultClientMetadata();
       yield* authSessions.create({
@@ -312,19 +297,12 @@ export const makeSessionCredentialService = Effect.gen(function* () {
         });
       }
 
-      const expiresAt = DateTime.make(claims.exp);
-      if (Option.isNone(expiresAt)) {
-        return yield* new SessionCredentialError({
-          message: "Invalid `exp` claim",
-        });
-      }
-
       return {
         sessionId: claims.sid,
         token,
         method: claims.method,
         client: toClientMetadata(row.value.client),
-        expiresAt: expiresAt.value,
+        expiresAt: DateTime.makeUnsafe(claims.exp),
         subject: claims.sub,
         role: claims.role,
       } satisfies VerifiedSession;
@@ -339,7 +317,6 @@ export const makeSessionCredentialService = Effect.gen(function* () {
       ),
     );
 
-  const encodeWsClaims = Schema.encodeEffect(Schema.fromJsonString(WebSocketClaims));
   const issueWebSocketToken: SessionCredentialServiceShape["issueWebSocketToken"] = (
     sessionId,
     input,
@@ -356,12 +333,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       };
-      const encodedPayload = yield* encodeWsClaims(claims).pipe(
-        Effect.map(base64UrlEncode),
-        Effect.mapError(
-          (cause) => new SessionCredentialError({ message: "Failed to encode claims", cause }),
-        ),
-      );
+      const encodedPayload = base64UrlEncode(JSON.stringify(claims));
       const signature = signPayload(encodedPayload, signingSecret);
       return {
         token: `${encodedPayload}.${signature}`,

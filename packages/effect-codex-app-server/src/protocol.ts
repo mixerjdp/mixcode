@@ -10,9 +10,6 @@ import * as Stream from "effect/Stream";
 
 import * as CodexError from "./errors.ts";
 import { JsonRpcId, JsonRpcResponseEnvelope } from "./_internal/shared.ts";
-const isJsonRpcId = Schema.is(JsonRpcId);
-const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
-const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -75,7 +72,7 @@ function isIncomingRequest(value: unknown): value is CodexAppServerIncomingReque
   if (!isObject(value) || typeof value.method !== "string") {
     return false;
   }
-  return isJsonRpcId(value.id);
+  return Schema.is(JsonRpcId)(value.id);
 }
 
 function isIncomingNotification(value: unknown): value is CodexAppServerIncomingNotification {
@@ -83,7 +80,7 @@ function isIncomingNotification(value: unknown): value is CodexAppServerIncoming
 }
 
 function isIncomingResponse(value: unknown): value is typeof JsonRpcResponseEnvelope.Type {
-  return isJsonRpcResponseEnvelope(value);
+  return Schema.is(JsonRpcResponseEnvelope)(value);
 }
 
 const encodeJsonString = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
@@ -117,7 +114,7 @@ const decodeWireMessage = (
   );
 
 const normalizeIncomingError = (error: unknown, detail: string): CodexError.CodexAppServerError =>
-  isCodexAppServerError(error)
+  Schema.is(CodexError.CodexAppServerError)(error)
     ? error
     : new CodexError.CodexAppServerTransportError({
         detail,

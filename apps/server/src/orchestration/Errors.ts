@@ -1,5 +1,4 @@
-import * as SchemaIssue from "effect/SchemaIssue";
-import * as Schema from "effect/Schema";
+import { SchemaIssue, Schema } from "effect";
 
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 

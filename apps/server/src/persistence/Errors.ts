@@ -1,5 +1,4 @@
-import * as Schema from "effect/Schema";
-import * as SchemaIssue from "effect/SchemaIssue";
+import { Schema, SchemaIssue } from "effect";
 
 // ===============================
 // Core Persistence Errors
@@ -30,8 +29,6 @@ export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceD
     return `Decode error in ${this.operation}: ${this.issue}`;
   }
 }
-const isPersistenceSqlError = Schema.is(PersistenceSqlError);
-const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
 export function toPersistenceSqlError(operation: string) {
   return (cause: unknown): PersistenceSqlError =>
@@ -61,7 +58,7 @@ export function toPersistenceDecodeCauseError(operation: string) {
 }
 
 export const isPersistenceError = (u: unknown) =>
-  isPersistenceSqlError(u) || isPersistenceDecodeError(u);
+  Schema.is(PersistenceSqlError)(u) || Schema.is(PersistenceDecodeError)(u);
 
 // ===============================
 // Provider Session Repository Errors

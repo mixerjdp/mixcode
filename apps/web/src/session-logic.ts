@@ -56,6 +56,7 @@ export interface WorkLogEntry {
   rawCommand?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
+  activityKind?: OrchestrationThreadActivity["kind"];
   toolTitle?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
@@ -848,6 +849,86 @@ function normalizeCommandValue(value: unknown): string | null {
   return formatted ? unwrapKnownShellCommandWrapper(formatted) : null;
 }
 
+const SHELL_COMMAND_LEADS = new Set([
+  "bash",
+  "bun",
+  "cat",
+  "cp",
+  "curl",
+  "deno",
+  "dir",
+  "echo",
+  "find",
+  "git",
+  "grep",
+  "head",
+  "ls",
+  "make",
+  "mv",
+  "node",
+  "npm",
+  "npx",
+  "pnpm",
+  "powershell",
+  "pwsh",
+  "python",
+  "python3",
+  "rg",
+  "rm",
+  "sed",
+  "sh",
+  "tail",
+  "tar",
+  "type",
+  "unzip",
+  "wget",
+  "yarn",
+]);
+
+function looksLikeShellCommandInvocation(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.includes("\n")) {
+    return false;
+  }
+
+  const quotedMatch = /^(?<quote>["'])(?<token>.+?)\k<quote>(?:\s+(?<rest>.*))?$/u.exec(trimmed);
+  const command = trimmed.replace(/^["']|["']$/gu, "");
+  const firstToken = quotedMatch?.groups?.token ?? command.split(/\s+/u, 1)[0] ?? "";
+  const rest = quotedMatch?.groups?.rest ?? command.slice(firstToken.length).trimStart();
+  const normalizedFirstToken = firstToken.toLowerCase();
+
+  if (SHELL_COMMAND_LEADS.has(normalizedFirstToken)) {
+    return true;
+  }
+
+  if (/\.(?:bat|cmd|exe|ps1|sh|py|js|ts)$/iu.test(normalizedFirstToken)) {
+    return true;
+  }
+
+  if (rest.length > 0) {
+    if (
+      normalizedFirstToken.length > 0 &&
+      (normalizedFirstToken.startsWith("/") ||
+        normalizedFirstToken.startsWith("./") ||
+        normalizedFirstToken.startsWith(".\\") ||
+        /^[a-z]:[\\/]/iu.test(normalizedFirstToken))
+    ) {
+      return true;
+    }
+  }
+
+  if (
+    normalizedFirstToken.startsWith("/") ||
+    normalizedFirstToken.startsWith("./") ||
+    normalizedFirstToken.startsWith(".\\") ||
+    /^[a-z]:[\\/]/iu.test(normalizedFirstToken)
+  ) {
+    return rest.length > 0 && /(?:\s+-(?:-)?\S|\s+[|><;&])/u.test(trimmed);
+  }
+
+  return /(?:\s+-(?:-)?\S|\s+[|><;&])/u.test(trimmed);
+}
+
 function toRawToolCommand(value: unknown, normalizedCommand: string | null): string | null {
   const formatted = formatCommandValue(value);
   if (!formatted || normalizedCommand === null) {
@@ -864,6 +945,7 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const itemInput = asRecord(item?.input);
+  const rawInput = asRecord(data?.rawInput);
   const itemType = asTrimmedString(payload?.itemType);
   const detail = asTrimmedString(payload?.detail);
   const candidates: unknown[] = [
@@ -871,7 +953,10 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
     itemInput?.command,
     itemResult?.command,
     data?.command,
-    itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
+    rawInput?.command,
+    rawInput?.executable && rawInput?.args
+      ? [rawInput.executable, ...(Array.isArray(rawInput.args) ? rawInput.args : [rawInput.args])]
+      : rawInput?.executable,
   ];
 
   for (const candidate of candidates) {
@@ -882,6 +967,15 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
     return {
       command,
       rawCommand: toRawToolCommand(candidate, command),
+    };
+  }
+
+  const detailCommand =
+    itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null;
+  if (detailCommand && looksLikeShellCommandInvocation(detailCommand)) {
+    return {
+      command: normalizeCommandValue(detailCommand),
+      rawCommand: detailCommand,
     };
   }
 
@@ -1079,6 +1173,7 @@ function collectChangedFiles(value: unknown, target: string[], seen: Set<string>
   pushChangedFile(target, seen, record.oldPath);
 
   for (const nestedKey of [
+    "locations",
     "item",
     "result",
     "input",

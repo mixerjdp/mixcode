@@ -1,6 +1,4 @@
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
+import { Effect, FileSystem, Path } from "effect";
 import {
   type ClientOrchestrationCommand,
   type OrchestrationCommand,

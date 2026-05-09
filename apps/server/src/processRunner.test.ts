@@ -39,3 +39,23 @@ describe("isWindowsCommandNotFound", () => {
     }
   });
 });
+
+describe("runProcess encoding", () => {
+  it("falls back to a legacy Windows text encoding when utf8 decoding breaks accents", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+    try {
+      const result = await runProcess(
+        "node",
+        ["-e", "process.stdout.write(Buffer.from([0x76,0x65,0x72,0x73,0x69,0xf3,0x6e]))"],
+        { allowNonZeroExit: true },
+      );
+
+      expect(result.stdout).toBe("versión");
+      expect(result.stderr).toBe("");
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+});

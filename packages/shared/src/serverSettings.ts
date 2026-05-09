@@ -1,12 +1,10 @@
 import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
 import { createModelSelection } from "./model.ts";
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
-const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
 
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
@@ -35,11 +33,12 @@ export function extractPersistedServerObservabilitySettings(input: {
 export function parsePersistedServerObservabilitySettings(
   raw: string,
 ): PersistedServerObservabilitySettings {
-  const decoded = decodeServerSettingsJson(raw);
-  if (Option.isSome(decoded)) {
-    return extractPersistedServerObservabilitySettings(decoded.value);
+  try {
+    const decoded = Schema.decodeUnknownSync(ServerSettingsJson)(raw);
+    return extractPersistedServerObservabilitySettings(decoded);
+  } catch {
+    return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
   }
-  return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
 }
 
 function shouldReplaceTextGenerationModelSelection(
@@ -76,15 +75,14 @@ export function applyServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
-  const { automaticGitFetchInterval, ...patchForMerge } = patch;
-  const next = deepMerge(current, patchForMerge);
-  const nextWithReplacements = {
-    ...next,
-    ...(patch.providerInstances !== undefined
-      ? { providerInstances: patch.providerInstances }
-      : {}),
-    ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
-  };
+  const next = deepMerge(current, patch);
+  const nextWithReplacements =
+    patch.providerInstances !== undefined
+      ? {
+          ...next,
+          providerInstances: patch.providerInstances,
+        }
+      : next;
   if (!selectionPatch) {
     return nextWithReplacements;
   }

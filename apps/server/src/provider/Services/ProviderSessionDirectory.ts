@@ -5,9 +5,8 @@ import type {
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import { Option, Context } from "effect";
+import type { Effect } from "effect";
 
 import type {
   ProviderSessionDirectoryPersistenceError,

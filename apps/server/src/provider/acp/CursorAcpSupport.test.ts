@@ -1,4 +1,4 @@
-import * as Effect from "effect/Effect";
+import { Effect } from "effect";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { describe, expect, it } from "vitest";
 
@@ -105,9 +105,11 @@ describe("applyCursorAcpModelSelection", () => {
           { id: "fastMode", value: true },
         ],
         mapError: ({ step, configId, cause }) =>
-          step === "set-config-option"
-            ? `failed to set config option ${configId}: ${cause.message}`
-            : `failed to set model: ${cause.message}`,
+          new Error(
+            step === "set-config-option"
+              ? `failed to set config option ${configId}: ${cause.message}`
+              : `failed to set model: ${cause.message}`,
+          ),
       }),
     );
 

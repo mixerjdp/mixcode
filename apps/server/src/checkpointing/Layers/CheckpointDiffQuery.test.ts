@@ -1,7 +1,5 @@
 import { CheckpointRef, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
+import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -94,8 +92,6 @@ describe("CheckpointDiffQueryLive", () => {
             Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
           getShellSnapshot: () =>
             Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
-          getArchivedShellSnapshot: () =>
-            Effect.die("CheckpointDiffQuery should not request archived shell snapshots"),
           getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
@@ -176,8 +172,6 @@ describe("CheckpointDiffQueryLive", () => {
             Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
           getShellSnapshot: () =>
             Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
-          getArchivedShellSnapshot: () =>
-            Effect.die("CheckpointDiffQuery should not request archived shell snapshots"),
           getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
@@ -226,8 +220,6 @@ describe("CheckpointDiffQueryLive", () => {
             Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
           getShellSnapshot: () =>
             Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
-          getArchivedShellSnapshot: () =>
-            Effect.die("CheckpointDiffQuery should not request archived shell snapshots"),
           getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),

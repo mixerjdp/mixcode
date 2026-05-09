@@ -24,16 +24,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
-import * as SchemaIssue from "effect/SchemaIssue";
-import * as Stream from "effect/Stream";
+import { Cause, Effect, Layer, Option, PubSub, Ref, Schema, SchemaIssue, Stream } from "effect";
 
 import {
   increment,
@@ -56,7 +47,6 @@ import {
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
-const isModelSelection = Schema.is(ModelSelection);
 
 /**
  * Hook for tests that want to override the canonical event logger pulled
@@ -88,9 +78,8 @@ const decodeInputOrValidationError = <S extends Schema.Top>(input: {
   readonly operation: string;
   readonly schema: S;
   readonly payload: unknown;
-}) => {
-  const decodeProviderRequestInput = Schema.decodeUnknownEffect(input.schema);
-  return decodeProviderRequestInput(input.payload).pipe(
+}) =>
+  Schema.decodeUnknownEffect(input.schema)(input.payload).pipe(
     Effect.mapError(
       (schemaError) =>
         new ProviderValidationError({
@@ -100,7 +89,6 @@ const decodeInputOrValidationError = <S extends Schema.Top>(input: {
         }),
     ),
   );
-};
 
 function toRuntimeStatus(session: ProviderSession): "starting" | "running" | "stopped" | "error" {
   switch (session.status) {
@@ -145,7 +133,7 @@ function readPersistedModelSelection(
     return undefined;
   }
   const raw = "modelSelection" in runtimePayload ? runtimePayload.modelSelection : undefined;
-  return isModelSelection(raw) ? raw : undefined;
+  return Schema.is(ModelSelection)(raw) ? raw : undefined;
 }
 
 function readPersistedCwd(
@@ -211,7 +199,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
-  const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
@@ -668,7 +655,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
           activeTurnId: turn.turnId,
           lastRuntimeEvent: "provider.sendTurn",
-          lastRuntimeEventAt: yield* nowIso,
+          lastRuntimeEventAt: new Date().toISOString(),
         },
       });
       yield* analytics.record("provider.turn.sent", {
@@ -990,34 +977,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ).pipe(Effect.map((sessionsByAdapter) => sessionsByAdapter.flatMap((sessions) => sessions)));
     yield* Effect.forEach(activeSessions, (session) =>
-      Effect.flatMap(nowIso, (lastRuntimeEventAt) =>
-        upsertSessionBinding(session, session.threadId, {
-          lastRuntimeEvent: "provider.stopAll",
-          lastRuntimeEventAt,
-        }),
-      ),
+      upsertSessionBinding(session, session.threadId, {
+        lastRuntimeEvent: "provider.stopAll",
+        lastRuntimeEventAt: new Date().toISOString(),
+      }),
     ).pipe(Effect.asVoid);
     yield* Effect.forEach(currentAdapters, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
     const bindings = yield* directory.listBindings().pipe(Effect.orElseSucceed(() => []));
-    yield* Effect.forEach(bindings, (binding) =>
-      Effect.gen(function* () {
-        const providerInstanceId = dieOnMissingBindingInstanceId(
-          "ProviderService.stopAll",
-          binding,
-        );
-        return yield* directory.upsert({
-          threadId: binding.threadId,
-          provider: binding.provider,
-          providerInstanceId,
-          status: "stopped",
-          runtimePayload: {
-            activeTurnId: null,
-            lastRuntimeEvent: "provider.stopAll",
-            lastRuntimeEventAt: yield* nowIso,
-          },
-        });
-      }),
-    ).pipe(Effect.asVoid);
+    yield* Effect.forEach(bindings, (binding) => {
+      const providerInstanceId = dieOnMissingBindingInstanceId("ProviderService.stopAll", binding);
+      return directory.upsert({
+        threadId: binding.threadId,
+        provider: binding.provider,
+        providerInstanceId,
+        status: "stopped",
+        runtimePayload: {
+          activeTurnId: null,
+          lastRuntimeEvent: "provider.stopAll",
+          lastRuntimeEventAt: new Date().toISOString(),
+        },
+      });
+    }).pipe(Effect.asVoid);
     yield* analytics.record("provider.sessions.stopped_all", {
       sessionCount: threadIds.length,
     });

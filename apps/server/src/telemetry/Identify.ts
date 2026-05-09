@@ -1,8 +1,4 @@
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import * as Random from "effect/Random";
-import * as Schema from "effect/Schema";
+import { Effect, FileSystem, Path, Random, Schema } from "effect";
 import * as Crypto from "node:crypto";
 import { homedir } from "node:os";
 import { ServerConfig } from "../config.ts";

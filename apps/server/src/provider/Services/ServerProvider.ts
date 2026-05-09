@@ -1,6 +1,5 @@
 import type { ServerProvider } from "@t3tools/contracts";
-import type * as Effect from "effect/Effect";
-import type * as Stream from "effect/Stream";
+import type { Effect, Stream } from "effect";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 
 export interface ServerProviderShape {

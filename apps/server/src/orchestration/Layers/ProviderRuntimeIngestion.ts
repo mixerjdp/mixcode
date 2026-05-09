@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -16,14 +17,9 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  RuntimeTaskId,
 } from "@t3tools/contracts";
-import * as Cache from "effect/Cache";
-import * as Cause from "effect/Cause";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Stream from "effect/Stream";
+import { Cache, Cause, Duration, Effect, Layer, Option, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -41,11 +37,18 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
   CommandId.make(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
+const reasoningBufferKey = (threadId: ThreadId, turnKey: string, itemKey: string) =>
+  `reasoning:${threadId}:${turnKey}:${itemKey}`;
 
 interface AssistantSegmentState {
   baseKey: string;
   nextSegmentIndex: number;
   activeMessageId: MessageId | null;
+}
+
+interface BufferedTextState {
+  text: string;
+  createdAt: string;
 }
 
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
@@ -161,6 +164,18 @@ function maxCheckpointTurnCount(
     }
   }
   return maxTurnCount;
+}
+
+function stripRawOutputFromToolData(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return value;
+  }
+  const data = value as Record<string, unknown>;
+  if (!("rawOutput" in data)) {
+    return value;
+  }
+  const { rawOutput: _rawOutput, ...rest } = data;
+  return rest;
 }
 
 function truncateDetail(value: string, limit = 180): string {
@@ -455,7 +470,7 @@ function runtimeEventToActivities(
           summary: "Reasoning update",
           payload: {
             taskId: event.payload.taskId,
-            detail: truncateDetail(event.payload.summary ?? event.payload.description),
+            detail: event.payload.summary ?? event.payload.description,
             ...(event.payload.summary ? { summary: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.lastToolName ? { lastToolName: event.payload.lastToolName } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
@@ -547,8 +562,10 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...(event.payload.detail ? { detail: event.payload.detail } : {}),
+            ...(event.payload.data !== undefined
+              ? { data: stripRawOutputFromToolData(event.payload.data) }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -569,8 +586,10 @@ function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool",
           payload: {
             itemType: event.payload.itemType,
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...(event.payload.detail ? { detail: event.payload.detail } : {}),
+            ...(event.payload.data !== undefined
+              ? { data: stripRawOutputFromToolData(event.payload.data) }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -591,7 +610,10 @@ function runtimeEventToActivities(
           summary: `${event.payload.title ?? "Tool"} started`,
           payload: {
             itemType: event.payload.itemType,
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.detail ? { detail: event.payload.detail } : {}),
+            ...(event.payload.data !== undefined
+              ? { data: stripRawOutputFromToolData(event.payload.data) }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -635,6 +657,11 @@ const make = Effect.gen(function* () {
   });
 
   const bufferedProposedPlanById = yield* Cache.make<string, { text: string; createdAt: string }>({
+    capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
+    lookup: () => Effect.succeed({ text: "", createdAt: "" }),
+  });
+  const bufferedReasoningByKey = yield* Cache.make<string, BufferedTextState>({
     capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
@@ -828,6 +855,70 @@ const make = Effect.gen(function* () {
 
   const clearBufferedProposedPlan = (planId: string) =>
     Cache.invalidate(bufferedProposedPlanById, planId);
+
+  const appendBufferedReasoningText = (key: string, delta: string, createdAt: string) =>
+    Cache.getOption(bufferedReasoningByKey, key).pipe(
+      Effect.flatMap((existingEntry) =>
+        Effect.gen(function* () {
+          const existing = Option.getOrUndefined(existingEntry);
+          const nextState = {
+            text: `${existing?.text ?? ""}${delta}`,
+            createdAt:
+              existing?.createdAt && existing.createdAt.length > 0 ? existing.createdAt : createdAt,
+          };
+          yield* Cache.set(bufferedReasoningByKey, key, nextState);
+          return nextState;
+        }),
+      ),
+    );
+
+  const takeBufferedReasoningText = (key: string) =>
+    Cache.getOption(bufferedReasoningByKey, key).pipe(
+      Effect.flatMap((existingEntry) =>
+        Cache.invalidate(bufferedReasoningByKey, key).pipe(
+          Effect.as(Option.getOrUndefined(existingEntry)),
+        ),
+      ),
+    );
+
+  const clearBufferedReasoningText = (key: string) => Cache.invalidate(bufferedReasoningByKey, key);
+
+  const summarizeReasoningText = (text: string): string => {
+    const firstLine = text
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    return truncateDetail(firstLine ?? text, 240);
+  };
+
+  const dispatchReasoningActivity = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    turnId?: TurnId;
+    key: string;
+    createdAt: string;
+    text: string;
+  }) =>
+    orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: providerCommandId(input.event, "reasoning-activity-append"),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.make(`reasoning:${input.key}`),
+        tone: "info",
+        kind: "task.progress",
+        summary: "Reasoning update",
+        payload: {
+          taskId: RuntimeTaskId.make(`reasoning:${input.key}`),
+          description: "Reasoning update",
+          summary: summarizeReasoningText(input.text),
+          detail: input.text,
+        },
+        turnId: input.turnId ?? null,
+        createdAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
 
   const clearAssistantMessageState = (messageId: MessageId) =>
     clearBufferedAssistantText(messageId);
@@ -1061,9 +1152,11 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const prefix = `${threadId}:`;
       const proposedPlanPrefix = `plan:${threadId}:`;
+      const reasoningPrefix = `reasoning:${threadId}:`;
       const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
       const assistantSegmentKeys = Array.from(yield* Cache.keys(assistantSegmentStateByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
+      const reasoningKeys = Array.from(yield* Cache.keys(bufferedReasoningByKey));
       yield* Effect.forEach(
         turnKeys,
         (key) =>
@@ -1097,6 +1190,11 @@ const make = Effect.gen(function* () {
           key.startsWith(proposedPlanPrefix)
             ? Cache.invalidate(bufferedProposedPlanById, key)
             : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        reasoningKeys,
+        (key) => (key.startsWith(reasoningPrefix) ? clearBufferedReasoningText(key) : Effect.void),
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
     });
@@ -1319,6 +1417,12 @@ const make = Effect.gen(function* () {
         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
           ? event.payload.delta
           : undefined;
+      const reasoningDelta =
+        event.type === "content.delta" &&
+        (event.payload.streamKind === "reasoning_text" ||
+          event.payload.streamKind === "reasoning_summary_text")
+          ? event.payload.delta
+          : undefined;
       const proposedPlanDelta =
         event.type === "turn.proposed.delta" ? event.payload.delta : undefined;
 
@@ -1408,6 +1512,28 @@ const make = Effect.gen(function* () {
         });
       }
 
+      if (reasoningDelta && reasoningDelta.length > 0) {
+        const turnId = toTurnId(event.turnId);
+        const reasoningKey = reasoningBufferKey(
+          thread.id,
+          turnId ? String(turnId) : "turnless",
+          String(event.itemId ?? event.eventId),
+        );
+        const bufferedReasoning = yield* appendBufferedReasoningText(
+          reasoningKey,
+          reasoningDelta,
+          now,
+        );
+        yield* dispatchReasoningActivity({
+          event,
+          threadId: thread.id,
+          ...(turnId ? { turnId } : {}),
+          key: reasoningKey,
+          createdAt: bufferedReasoning.createdAt,
+          text: bufferedReasoning.text,
+        });
+      }
+
       if (proposedPlanDelta && proposedPlanDelta.length > 0) {
         const planId = proposedPlanIdFromEvent(event, thread.id);
         yield* appendBufferedProposedPlan(planId, proposedPlanDelta, now);
@@ -1422,11 +1548,22 @@ const make = Effect.gen(function* () {
               fallbackText: event.payload.detail,
             }
           : undefined;
+      const reasoningCompletion =
+        event.type === "item.completed" && event.payload.itemType === "reasoning"
+          ? {
+              key: reasoningBufferKey(
+                thread.id,
+                String(eventTurnId ?? "turnless"),
+                String(event.itemId ?? event.eventId),
+              ),
+              fallbackText: event.payload.detail,
+            }
+          : undefined;
       const proposedPlanCompletion =
         event.type === "turn.proposed.completed"
           ? {
               planId: proposedPlanIdFromEvent(event, thread.id),
-              turnId: toTurnId(event.turnId),
+              turnId: eventTurnId,
               planMarkdown: event.payload.planMarkdown,
             }
           : undefined;
@@ -1434,7 +1571,7 @@ const make = Effect.gen(function* () {
       if (assistantCompletion) {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
-        const turnId = toTurnId(event.turnId);
+        const turnId = eventTurnId;
         const activeAssistantMessageId = turnId
           ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId)
           : Option.none<MessageId>();
@@ -1477,9 +1614,25 @@ const make = Effect.gen(function* () {
             yield* forgetAssistantMessageId(thread.id, turnId, assistantMessageId);
           }
         }
+      }
 
-        if (turnId) {
-          yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+      if (reasoningCompletion) {
+        const turnId = eventTurnId;
+        const bufferedReasoning = yield* takeBufferedReasoningText(reasoningCompletion.key);
+        const text =
+          bufferedReasoning?.text ??
+          ((reasoningCompletion.fallbackText?.trim().length ?? 0) > 0
+            ? reasoningCompletion.fallbackText!
+            : "");
+        if (text.trim().length > 0) {
+          yield* dispatchReasoningActivity({
+            event,
+            threadId: thread.id,
+            ...(turnId ? { turnId } : {}),
+            key: reasoningCompletion.key,
+            createdAt: bufferedReasoning?.createdAt ?? now,
+            text,
+          });
         }
       }
 
@@ -1500,7 +1653,7 @@ const make = Effect.gen(function* () {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
-        const turnId = toTurnId(event.turnId);
+        const turnId = eventTurnId;
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(

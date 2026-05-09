@@ -648,7 +648,7 @@ export function ProviderInstanceCard({
   );
 
   const authRowNode = (
-    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground/80">
+    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
       {hasAuthenticatedEmail ? (
         <>
           <span>Authenticated as</span>

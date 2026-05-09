@@ -1,8 +1,5 @@
 import type { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
-import * as Random from "effect/Random";
+import { Cause, Effect } from "effect";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
@@ -17,12 +14,12 @@ function writeNativeAcpLog(input: {
 }): Effect.Effect<void, never> {
   return Effect.gen(function* () {
     if (!input.nativeEventLogger) return;
-    const observedAt = DateTime.formatIso(yield* DateTime.now);
+    const observedAt = new Date().toISOString();
     yield* input.nativeEventLogger.write(
       {
         observedAt,
         event: {
-          id: yield* Random.nextUUIDv4,
+          id: crypto.randomUUID(),
           kind: input.kind,
           provider: input.provider,
           createdAt: observedAt,

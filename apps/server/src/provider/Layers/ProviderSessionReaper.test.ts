@@ -6,15 +6,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
-import * as Option from "effect/Option";
-import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
+import { Effect, Exit, Layer, ManagedRuntime, Option, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -36,24 +28,20 @@ async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs = 2_000,
 ): Promise<void> {
-  const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
+  const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<void> => {
     if (await predicate()) {
       return;
     }
-    if ((await Effect.runPromise(Clock.currentTimeMillis)) >= deadline) {
+    if (Date.now() >= deadline) {
       throw new Error("Timed out waiting for expectation.");
     }
-    await Effect.runPromise(Effect.yieldNow);
+    await new Promise((resolve) => setTimeout(resolve, 10));
     return poll();
   };
 
   return poll();
 }
-
-const drainFibers = Effect.forEach(Array.from({ length: 10 }), () => Effect.yieldNow, {
-  discard: true,
-});
 
 const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
 
@@ -71,7 +59,7 @@ function makeReadModel(
     } | null;
   }>,
 ) {
-  const now = "2026-01-01T00:00:00.000Z";
+  const now = new Date().toISOString();
   const projectId = ProjectId.make("project-provider-session-reaper");
 
   return {
@@ -194,7 +182,6 @@ describe("ProviderSessionReaper", () => {
           getCommandReadModel: () => Effect.die("unused"),
           getSnapshot: () => Effect.die("unused"),
           getShellSnapshot: () => Effect.die("unused"),
-          getArchivedShellSnapshot: () => Effect.die("unused"),
           getSnapshotSequence: () =>
             Effect.succeed({ snapshotSequence: input.readModel.snapshotSequence }),
           getCounts: () => Effect.die("unused"),
@@ -220,7 +207,7 @@ describe("ProviderSessionReaper", () => {
 
   it("reaps stale persisted sessions without active turns", async () => {
     const threadId = ThreadId.make("thread-reaper-stale");
-    const now = "2026-01-01T00:00:00.000Z";
+    const now = new Date().toISOString();
     const harness = await createHarness({
       readModel: makeReadModel([
         {
@@ -268,7 +255,7 @@ describe("ProviderSessionReaper", () => {
   it("skips stale sessions when the thread still has an active turn", async () => {
     const threadId = ThreadId.make("thread-reaper-active-turn");
     const turnId = TurnId.make("turn-reaper-active");
-    const now = "2026-01-01T00:00:00.000Z";
+    const now = new Date().toISOString();
     const harness = await createHarness({
       readModel: makeReadModel([
         {
@@ -306,7 +293,7 @@ describe("ProviderSessionReaper", () => {
     const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
-    await Effect.runPromise(drainFibers);
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(harness.stopSession).not.toHaveBeenCalled();
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
@@ -315,7 +302,7 @@ describe("ProviderSessionReaper", () => {
 
   it("does not reap sessions that are still within the inactivity threshold", async () => {
     const threadId = ThreadId.make("thread-reaper-fresh");
-    const now = DateTime.formatIso(await Effect.runPromise(DateTime.now));
+    const now = new Date().toISOString();
     const harness = await createHarness({
       readModel: makeReadModel([
         {
@@ -353,7 +340,7 @@ describe("ProviderSessionReaper", () => {
     const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
-    await Effect.runPromise(drainFibers);
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(harness.stopSession).not.toHaveBeenCalled();
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
@@ -362,7 +349,7 @@ describe("ProviderSessionReaper", () => {
 
   it("skips persisted sessions that are already marked stopped", async () => {
     const threadId = ThreadId.make("thread-reaper-stopped");
-    const now = "2026-01-01T00:00:00.000Z";
+    const now = new Date().toISOString();
     const harness = await createHarness({
       readModel: makeReadModel([
         {
@@ -400,7 +387,7 @@ describe("ProviderSessionReaper", () => {
     const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
-    await Effect.runPromise(drainFibers);
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(harness.stopSession).not.toHaveBeenCalled();
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
@@ -410,7 +397,7 @@ describe("ProviderSessionReaper", () => {
   it("continues reaping other sessions when one stop attempt fails", async () => {
     const failedThreadId = ThreadId.make("thread-reaper-stop-failure");
     const reapedThreadId = ThreadId.make("thread-reaper-stop-success");
-    const now = "2026-01-01T00:00:00.000Z";
+    const now = new Date().toISOString();
     const harness = await createHarness({
       readModel: makeReadModel([
         {
@@ -496,7 +483,7 @@ describe("ProviderSessionReaper", () => {
   it("continues reaping other sessions when one stop attempt defects", async () => {
     const defectThreadId = ThreadId.make("thread-reaper-stop-defect");
     const reapedThreadId = ThreadId.make("thread-reaper-stop-after-defect");
-    const now = "2026-01-01T00:00:00.000Z";
+    const now = new Date().toISOString();
     const harness = await createHarness({
       readModel: makeReadModel([
         {

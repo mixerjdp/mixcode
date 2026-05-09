@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,14 +22,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
-import * as Random from "effect/Random";
-import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
+import { Context, Effect, Fiber, Layer, Random, Schema, Stream } from "effect";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -38,7 +30,6 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
-const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
 class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()(
@@ -187,7 +178,7 @@ function makeHarness(config?: {
     layer: Layer.effect(
       ClaudeAdapter,
       Effect.gen(function* () {
-        const claudeConfig = decodeClaudeSettings(config?.claudeConfig ?? {});
+        const claudeConfig = Schema.decodeSync(ClaudeSettings)(config?.claudeConfig ?? {});
         return yield* makeClaudeAdapter(claudeConfig, adapterOptions);
       }),
     ).pipe(
@@ -1345,7 +1336,7 @@ describe("ClaudeAdapterLive", () => {
     const layer = Layer.effect(
       ClaudeAdapter,
       Effect.gen(function* () {
-        const claudeConfig = decodeClaudeSettings({});
+        const claudeConfig = Schema.decodeSync(ClaudeSettings)({});
         return yield* makeClaudeAdapter(claudeConfig, {
           createQuery: () => {
             const query = new FakeClaudeQuery();
@@ -1428,7 +1419,7 @@ describe("ClaudeAdapterLive", () => {
     const layer = Layer.effect(
       ClaudeAdapter,
       Effect.gen(function* () {
-        const claudeConfig = decodeClaudeSettings({});
+        const claudeConfig = Schema.decodeSync(ClaudeSettings)({});
         return yield* makeClaudeAdapter(claudeConfig, {
           createQuery: (input) => {
             // Simulate the SDK consuming the prompt iterable
@@ -1472,8 +1463,7 @@ describe("ClaudeAdapterLive", () => {
       yield* Effect.yieldNow;
       yield* Effect.yieldNow;
       yield* Effect.yieldNow;
-      yield* TestClock.adjust("50 millis");
-      yield* Effect.yieldNow;
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
 
       runtimeEventsFiber.interruptUnsafe();
 

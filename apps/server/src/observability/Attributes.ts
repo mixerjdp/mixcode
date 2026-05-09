@@ -1,5 +1,4 @@
-import * as Cause from "effect/Cause";
-import * as Exit from "effect/Exit";
+import { Cause, Exit } from "effect";
 
 export type MetricAttributeValue = string;
 export type MetricAttributes = Readonly<Record<string, MetricAttributeValue>>;

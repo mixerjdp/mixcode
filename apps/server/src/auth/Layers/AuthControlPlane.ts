@@ -1,7 +1,5 @@
 import type { AuthClientSession, AuthPairingLink } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import { DateTime, Effect, Layer } from "effect";
 
 import { BootstrapCredentialServiceLive } from "./BootstrapCredentialService.ts";
 import { ServerSecretStoreLive } from "./ServerSecretStore.ts";

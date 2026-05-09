@@ -3,14 +3,11 @@ import {
   type ServerProvider,
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
-import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveCommandPath } from "@t3tools/shared/shell";
-import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import { DateTime, Effect, FileSystem, Option, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+
+import { compareCliVersions } from "./cliVersion.ts";
 
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
@@ -364,7 +361,7 @@ function deriveVersionAdvisory(input: {
   if (!input.latestVersion) {
     return { status: "unknown", message: null };
   }
-  if (compareSemverVersions(input.currentVersion, input.latestVersion) < 0) {
+  if (compareCliVersions(input.currentVersion, input.latestVersion) < 0) {
     return {
       status: "behind_latest",
       message: PROVIDER_UPDATE_ACTION_TOAST_MESSAGE,

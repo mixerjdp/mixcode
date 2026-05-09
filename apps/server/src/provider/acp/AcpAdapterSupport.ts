@@ -3,7 +3,7 @@ import {
   type ProviderDriverKind,
   type ThreadId,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
+import { Schema } from "effect";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import {
@@ -11,8 +11,6 @@ import {
   ProviderAdapterSessionClosedError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
-const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 export function mapAcpToAdapterError(
   provider: ProviderDriverKind,
@@ -20,14 +18,14 @@ export function mapAcpToAdapterError(
   method: string,
   error: EffectAcpErrors.AcpError,
 ): ProviderAdapterError {
-  if (isAcpProcessExitedError(error)) {
+  if (Schema.is(EffectAcpErrors.AcpProcessExitedError)(error)) {
     return new ProviderAdapterSessionClosedError({
       provider,
       threadId,
       cause: error,
     });
   }
-  if (isAcpRequestError(error)) {
+  if (Schema.is(EffectAcpErrors.AcpRequestError)(error)) {
     return new ProviderAdapterRequestError({
       provider,
       method,

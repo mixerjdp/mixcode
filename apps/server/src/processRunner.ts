@@ -1,6 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import { type ChildProcess as ChildProcessHandle, spawn, spawnSync } from "node:child_process";
-import * as NodeTimers from "node:timers";
+
 export interface ProcessRunOptions {
   cwd?: string | undefined;
   timeoutMs?: number | undefined;
@@ -112,12 +111,12 @@ function killChild(child: ChildProcessHandle, signal: NodeJS.Signals = "SIGTERM"
 }
 
 function appendChunkWithinLimit(
-  target: string,
+  target: Buffer[],
   currentBytes: number,
   chunk: Buffer,
   maxBytes: number,
 ): {
-  next: string;
+  next: Buffer[];
   nextBytes: number;
   truncated: boolean;
 } {
@@ -127,16 +126,32 @@ function appendChunkWithinLimit(
   }
   if (chunk.length <= remaining) {
     return {
-      next: `${target}${chunk.toString()}`,
+      next: [...target, chunk],
       nextBytes: currentBytes + chunk.length,
       truncated: false,
     };
   }
   return {
-    next: `${target}${chunk.subarray(0, remaining).toString()}`,
+    next: [...target, chunk.subarray(0, remaining)],
     nextBytes: currentBytes + remaining,
     truncated: true,
   };
+}
+
+const REPLACEMENT_CHAR = "\uFFFD";
+
+function decodeCapturedOutput(chunks: readonly Buffer[]): string {
+  if (chunks.length === 0) {
+    return "";
+  }
+
+  const utf8Text = Buffer.concat(chunks).toString("utf8");
+  if (process.platform !== "win32" || !utf8Text.includes(REPLACEMENT_CHAR)) {
+    return utf8Text;
+  }
+
+  const latin1Text = Buffer.concat(chunks).toString("latin1");
+  return latin1Text.includes(REPLACEMENT_CHAR) ? utf8Text : latin1Text;
 }
 
 export async function runProcess(
@@ -156,22 +171,20 @@ export async function runProcess(
       shell: process.platform === "win32",
     });
 
-    let stdout = "";
-    let stderr = "";
+    let stdoutChunks: Buffer[] = [];
+    let stderrChunks: Buffer[] = [];
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let stdoutTruncated = false;
     let stderrTruncated = false;
     let timedOut = false;
     let settled = false;
-    let forceKillTimer: ReturnType<typeof NodeTimers.setTimeout> | null = null;
+    let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // @effect-diagnostics-next-line globalTimers:off - Promise/child_process boundary; moving this runner to Effect timers is a separate refactor.
-    const timeoutTimer = NodeTimers.setTimeout(() => {
+    const timeoutTimer = setTimeout(() => {
       timedOut = true;
       killChild(child, "SIGTERM");
-      // @effect-diagnostics-next-line globalTimers:off - Promise/child_process boundary; see timeout timer above.
-      forceKillTimer = NodeTimers.setTimeout(() => {
+      forceKillTimer = setTimeout(() => {
         killChild(child, "SIGKILL");
       }, 1_000);
     }, timeoutMs);
@@ -179,9 +192,9 @@ export async function runProcess(
     const finalize = (callback: () => void): void => {
       if (settled) return;
       settled = true;
-      NodeTimers.clearTimeout(timeoutTimer);
+      clearTimeout(timeoutTimer);
       if (forceKillTimer) {
-        NodeTimers.clearTimeout(forceKillTimer);
+        clearTimeout(forceKillTimer);
       }
       callback();
     };
@@ -195,30 +208,39 @@ export async function runProcess(
 
     const appendOutput = (stream: "stdout" | "stderr", chunk: Buffer | string): Error | null => {
       const chunkBuffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-      const text = chunkBuffer.toString();
       const byteLength = chunkBuffer.length;
       if (stream === "stdout") {
         if (outputMode === "truncate") {
-          const appended = appendChunkWithinLimit(stdout, stdoutBytes, chunkBuffer, maxBufferBytes);
-          stdout = appended.next;
+          const appended = appendChunkWithinLimit(
+            stdoutChunks,
+            stdoutBytes,
+            chunkBuffer,
+            maxBufferBytes,
+          );
+          stdoutChunks = appended.next;
           stdoutBytes = appended.nextBytes;
           stdoutTruncated = stdoutTruncated || appended.truncated;
           return null;
         }
-        stdout += text;
+        stdoutChunks.push(chunkBuffer);
         stdoutBytes += byteLength;
         if (stdoutBytes > maxBufferBytes) {
           return normalizeBufferError(command, args, "stdout", maxBufferBytes);
         }
       } else {
         if (outputMode === "truncate") {
-          const appended = appendChunkWithinLimit(stderr, stderrBytes, chunkBuffer, maxBufferBytes);
-          stderr = appended.next;
+          const appended = appendChunkWithinLimit(
+            stderrChunks,
+            stderrBytes,
+            chunkBuffer,
+            maxBufferBytes,
+          );
+          stderrChunks = appended.next;
           stderrBytes = appended.nextBytes;
           stderrTruncated = stderrTruncated || appended.truncated;
           return null;
         }
-        stderr += text;
+        stderrChunks.push(chunkBuffer);
         stderrBytes += byteLength;
         if (stderrBytes > maxBufferBytes) {
           return normalizeBufferError(command, args, "stderr", maxBufferBytes);
@@ -248,6 +270,8 @@ export async function runProcess(
     });
 
     child.once("close", (code, signal) => {
+      const stdout = decodeCapturedOutput(stdoutChunks);
+      const stderr = decodeCapturedOutput(stderrChunks);
       const result: ProcessRunResult = {
         stdout,
         stderr,

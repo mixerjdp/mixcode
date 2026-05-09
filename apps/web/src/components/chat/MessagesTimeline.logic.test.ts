@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildWorkEntryDisclosureText,
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
+  humanizeCompactToolLabel,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  shouldShowCommandOutputDisclosure,
+  buildWorkEntrySummaryPreview,
+  summarizeToolDetailPreview,
 } from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
@@ -147,6 +152,135 @@ describe("normalizeCompactToolLabel", () => {
 
   it("removes trailing completion wording from other labels", () => {
     expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
+  });
+});
+
+describe("humanizeCompactToolLabel", () => {
+  it("splits compact todo labels into readable text", () => {
+    expect(humanizeCompactToolLabel("Todowrite")).toBe("Todo write");
+  });
+
+  it("preserves already readable labels", () => {
+    expect(humanizeCompactToolLabel("Read File")).toBe("Read File");
+  });
+});
+
+describe("summarizeToolDetailPreview", () => {
+  it("summarizes JSON todo payloads into a human line", () => {
+    expect(
+      summarizeToolDetailPreview(
+        '[{"content":"Modificar buildlinux.bat para usar rsync incremental","status":"in_progress","priority":"high"},{"content":"Agregar una verificacion"}]',
+      ),
+    ).toBe("Modificar buildlinux.bat para usar rsync incremental");
+  });
+
+  it("summarizes prefixed JSON payloads", () => {
+    expect(
+      summarizeToolDetailPreview('Read: {"file_path":"C:/sw/t3code-main/buildlinux.bat"}'),
+    ).toBe("Read - C:/sw/t3code-main/buildlinux.bat");
+  });
+});
+
+describe("buildWorkEntryDisclosureText", () => {
+  it("includes the shell command and its output", () => {
+    expect(
+      buildWorkEntryDisclosureText(
+        {
+          label: "Shell",
+          detail: "Done.",
+          command: "bun run lint",
+          changedFiles: [],
+          requestKind: "command",
+        },
+        undefined,
+      ),
+    ).toBe("Command: bun run lint\n\nOutput:\nDone.");
+  });
+
+  it("includes touched files for tool calls", () => {
+    expect(
+      buildWorkEntryDisclosureText(
+        {
+          label: "Write",
+          detail: "Write file successfully.",
+          changedFiles: ["C:/sw/t3code-main/apps/web/src/foo.ts"],
+        },
+        {
+          formatFilePath: (path) => path.replace("C:/sw/t3code-main/", ""),
+        },
+      ),
+    ).toBe(
+      "Write\n\nFiles:\n- apps/web/src/foo.ts\n\nCommand: Write apps/web/src/foo.ts\n\nOutput:\nWrite file successfully.",
+    );
+  });
+
+  it("infers an explicit command line for file tools when no command metadata exists", () => {
+    expect(
+      buildWorkEntryDisclosureText(
+        {
+          label: "Edit",
+          detail: "Updated file successfully.",
+          changedFiles: ["C:/sw/t3code-main/apps/web/src/foo.ts"],
+        },
+        {
+          formatFilePath: (path) => path.replace("C:/sw/t3code-main/", ""),
+        },
+      ),
+    ).toBe(
+      "Edit\n\nFiles:\n- apps/web/src/foo.ts\n\nCommand: Edit apps/web/src/foo.ts\n\nOutput:\nUpdated file successfully.",
+    );
+  });
+
+  it("shows reasoning entries as a plain scrollable block", () => {
+    expect(
+      buildWorkEntryDisclosureText(
+        {
+          label: "Reasoning update",
+          detail: "I am checking the configuration surface first, then I will wire the UI.",
+          activityKind: "task.progress",
+        },
+        undefined,
+      ),
+    ).toBe("I am checking the configuration surface first, then I will wire the UI.");
+  });
+});
+
+describe("buildWorkEntrySummaryPreview", () => {
+  it("prefers touched files over generic write details", () => {
+    expect(
+      buildWorkEntrySummaryPreview(
+        {
+          detail: "Write file successfully.",
+          changedFiles: ["C:/sw/t3code-main/apps/web/src/foo.ts"],
+        },
+        {
+          formatFilePath: (path) => path.replace("C:/sw/t3code-main/", ""),
+        },
+      ),
+    ).toBe("apps/web/src/foo.ts");
+  });
+
+  it("falls back to the detail when there are no changed files", () => {
+    expect(
+      buildWorkEntrySummaryPreview({
+        detail: "Read file successfully.",
+        changedFiles: [],
+      }),
+    ).toBe("Read file successfully.");
+  });
+});
+
+describe("shouldShowCommandOutputDisclosure", () => {
+  it("shows command output for recent entries", () => {
+    expect(
+      shouldShowCommandOutputDisclosure("2026-01-01T00:00:00Z", Date.parse("2026-01-03T12:00:00Z")),
+    ).toBe(true);
+  });
+
+  it("hides command output for older entries", () => {
+    expect(
+      shouldShowCommandOutputDisclosure("2026-01-01T00:00:00Z", Date.parse("2026-01-05T00:00:01Z")),
+    ).toBe(false);
   });
 });
 

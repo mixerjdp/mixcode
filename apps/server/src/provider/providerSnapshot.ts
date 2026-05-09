@@ -8,9 +8,7 @@ import type {
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Data from "effect/Data";
-import * as Stream from "effect/Stream";
+import { Effect, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
@@ -26,12 +24,6 @@ export interface CommandResult {
   readonly stderr: string;
   readonly code: number;
 }
-
-export class ProviderCommandExecutionError extends Data.TaggedError(
-  "ProviderCommandExecutionError",
-)<{
-  readonly message: string;
-}> {}
 
 export interface ProviderProbeResult {
   readonly installed: boolean;
@@ -55,7 +47,7 @@ export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function isCommandMissingCause(error: { readonly message: string }): boolean {
+export function isCommandMissingCause(error: Error): boolean {
   const lower = error.message.toLowerCase();
   return lower.includes("enoent") || lower.includes("notfound");
 }
@@ -75,7 +67,7 @@ export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Comman
 
     const result: CommandResult = { stdout, stderr, code: exitCode };
     if (isWindowsCommandNotFound(exitCode, stderr)) {
-      return yield* new ProviderCommandExecutionError({ message: `spawn ${binaryPath} ENOENT` });
+      return yield* Effect.fail(new Error(`spawn ${binaryPath} ENOENT`));
     }
     return result;
   }).pipe(Effect.scoped);

@@ -1,9 +1,7 @@
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
+import { Effect, FileSystem, Path } from "effect";
 import { describe, expect, it } from "vitest";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type { CursorSettings, ServerProviderModel } from "@t3tools/contracts";
@@ -70,16 +68,12 @@ const makeMockAgentWrapper = Effect.fn("makeMockAgentWrapper")(function* (
     prefix: "cursor-provider-mock-",
   });
   const wrapperPath = path.join(dir, "fake-agent.sh");
-  // @effect-diagnostics-next-line preferSchemaOverJson:off
-  const bunCommand = JSON.stringify("bun");
-  // @effect-diagnostics-next-line preferSchemaOverJson:off
-  const mockAgentPathJson = JSON.stringify(mockAgentPath);
   const envExports = Object.entries(extraEnv ?? {})
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
   const script = `#!/bin/sh
 ${envExports}
-exec ${bunCommand} ${mockAgentPathJson} "$@"
+exec ${JSON.stringify("bun")} ${JSON.stringify(mockAgentPath)} "$@"
 `;
   yield* fileSystem.writeFileString(wrapperPath, script);
   yield* fileSystem.chmod(wrapperPath, 0o755);
@@ -95,17 +89,13 @@ const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")
     prefix: "cursor-provider-about-mock-",
   });
   const wrapperPath = path.join(dir, "fake-agent.sh");
-  // @effect-diagnostics-next-line preferSchemaOverJson:off
-  const bunCommand = JSON.stringify("bun");
-  // @effect-diagnostics-next-line preferSchemaOverJson:off
-  const mockAgentPathJson = JSON.stringify(mockAgentPath);
   const script = `#!/bin/sh
 if [ "$1" = "about" ]; then
   printf 'CLI Version         2026.04.09-f2b0fcd\\n'
   printf 'User Email          cursor@example.com\\n'
   exit 0
 fi
-exec ${bunCommand} ${mockAgentPathJson} "$@"
+exec ${JSON.stringify("bun")} ${JSON.stringify(mockAgentPath)} "$@"
 `;
   yield* fileSystem.writeFileString(wrapperPath, script);
   yield* fileSystem.chmod(wrapperPath, 0o755);
@@ -128,7 +118,7 @@ const waitForFileContent = Effect.fn("waitForFileContent")(function* (
     }
     yield* Effect.sleep("50 millis");
   }
-  return yield* Effect.die(`Timed out waiting for file content at ${filePath}`);
+  return yield* Effect.fail(new Error(`Timed out waiting for file content at ${filePath}`));
 });
 
 const makeProviderStatusEnvFixture = Effect.fn("makeProviderStatusEnvFixture")(function* () {

@@ -8,14 +8,9 @@ import {
   TurnId,
   type OrchestrationEvent,
   ProviderInstanceId,
+  type OrchestrationReadModel,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
-import * as Metric from "effect/Metric";
-import * as Option from "effect/Option";
-import * as Queue from "effect/Queue";
-import * as Stream from "effect/Stream";
+import { Effect, Layer, ManagedRuntime, Metric, Option, Queue, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -74,7 +69,7 @@ async function createOrchestrationSystem() {
 }
 
 function now() {
-  return "2026-01-01T00:00:00.000Z";
+  return new Date().toISOString();
 }
 
 const hasMetricSnapshot = (
@@ -177,13 +172,6 @@ describe("OrchestrationEngine", () => {
               return projectionSnapshot;
             }),
           getShellSnapshot: () =>
-            Effect.succeed({
-              snapshotSequence: projectionSnapshot.snapshotSequence,
-              projects: [],
-              threads: [],
-              updatedAt: projectionSnapshot.updatedAt,
-            }),
-          getArchivedShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,
               projects: [],

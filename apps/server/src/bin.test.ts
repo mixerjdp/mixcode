@@ -1,4 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - NodeHttpServer.layer takes `NodeHttp.createServer` as arg
 import * as NodeHttp from "node:http";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +5,7 @@ import { join } from "node:path";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NetService from "@t3tools/shared/Net";
+import { NetService } from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -139,7 +138,7 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
         }
         yield* persistServerRuntimeState({
           path: config.serverRuntimeStatePath,
-          state: yield* makePersistedServerRuntimeState({
+          state: makePersistedServerRuntimeState({
             config,
             port: address.port,
           }),
@@ -180,7 +179,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const createdOutput = yield* captureStdout(
         runCli(["auth", "pairing", "create", "--base-dir", baseDir, "--json"]),
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const created = JSON.parse(createdOutput.output) as {
         readonly id: string;
         readonly credential: string;
@@ -188,7 +186,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const listedOutput = yield* captureStdout(
         runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const listed = JSON.parse(listedOutput.output) as ReadonlyArray<{
         readonly id: string;
         readonly credential?: string;
@@ -210,7 +207,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const issuedOutput = yield* captureStdout(
         runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"]),
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const issued = JSON.parse(issuedOutput.output) as {
         readonly sessionId: string;
         readonly token: string;
@@ -219,7 +215,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const listedOutput = yield* captureStdout(
         runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]),
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const listed = JSON.parse(listedOutput.output) as ReadonlyArray<{
         readonly sessionId: string;
         readonly token?: string;

@@ -4,12 +4,8 @@ import type {
   AuthSessionId,
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
-import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
-import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
-import type * as Stream from "effect/Stream";
+import { Data, DateTime, Duration, Context } from "effect";
+import type { Effect, Stream } from "effect";
 
 export type SessionRole = "owner" | "client";
 

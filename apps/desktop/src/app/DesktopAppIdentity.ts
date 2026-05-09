@@ -16,7 +16,6 @@ const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const AppPackageMetadata = Schema.Struct({
   t3codeCommitHash: Schema.optional(Schema.String),
 });
-const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 
 export interface DesktopAppIdentityShape {
   readonly resolveUserDataPath: Effect.Effect<string>;
@@ -48,7 +47,7 @@ const make = Effect.gen(function* () {
     return yield* Option.match(raw, {
       onNone: () => Effect.succeed(Option.none<string>()),
       onSome: (value) =>
-        decodeAppPackageMetadata(value).pipe(
+        Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata))(value).pipe(
           Effect.map((parsed) =>
             Option.fromNullishOr(parsed.t3codeCommitHash).pipe(Option.flatMap(normalizeCommitHash)),
           ),

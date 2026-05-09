@@ -4,7 +4,7 @@ import {
   type GitManagerServiceError,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import { Cause } from "effect";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect } from "react";
 

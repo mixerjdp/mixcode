@@ -2,13 +2,7 @@ import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/c
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
-import * as Cause from "effect/Cause";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
-import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
+import { Cause, Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
 import { ServerConfig } from "./config.ts";
 
 import {
@@ -23,12 +17,6 @@ import {
 import { KeybindingsConfigError } from "@t3tools/contracts";
 
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
-const encodeKeybindingsConfigJson = Schema.encodeEffect(KeybindingsConfigJson);
-const decodeKeybindingsConfigJson = Schema.decodeUnknownEffect(KeybindingsConfigJson);
-const encodeResolvedKeybindingFromConfig = Schema.encodeEffect(ResolvedKeybindingFromConfig);
-const decodeResolvedKeybindingFromConfigExit = Schema.decodeUnknownExit(
-  ResolvedKeybindingFromConfig,
-);
 const makeKeybindingsLayer = () => {
   return KeybindingsLive.pipe(
     Layer.provideMerge(
@@ -51,7 +39,7 @@ const writeKeybindingsConfig = (configPath: string, rules: readonly KeybindingRu
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const encoded = yield* encodeKeybindingsConfigJson(rules);
+    const encoded = yield* Schema.encodeEffect(KeybindingsConfigJson)(rules);
     yield* fileSystem.makeDirectory(path.dirname(configPath), { recursive: true });
     yield* fileSystem.writeFileString(configPath, encoded);
   });
@@ -60,7 +48,7 @@ const readKeybindingsConfig = (configPath: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const rawConfig = yield* fileSystem.readFileString(configPath);
-    return yield* decodeKeybindingsConfigJson(rawConfig);
+    return yield* Schema.decodeUnknownEffect(KeybindingsConfigJson)(rawConfig);
   });
 
 it.layer(NodeServices.layer)("keybindings", (it) => {
@@ -117,7 +105,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
   it.effect("encodes resolved plus-key shortcuts", () =>
     Effect.gen(function* () {
-      const encoded = yield* encodeResolvedKeybindingFromConfig({
+      const encoded = yield* Schema.encodeEffect(ResolvedKeybindingFromConfig)({
         command: "terminal.toggle",
         shortcut: {
           key: "+",
@@ -163,7 +151,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
   it.effect("formats invalid resolved keybinding rules with the custom message", () =>
     Effect.sync(() => {
-      const result = decodeResolvedKeybindingFromConfigExit({
+      const result = Schema.decodeUnknownExit(ResolvedKeybindingFromConfig)({
         key: "mod+shift+d+o",
         command: "terminal.new",
       });
@@ -241,7 +229,6 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const { keybindingsConfigPath } = yield* ServerConfig;
       yield* fs.writeFileString(
         keybindingsConfigPath,
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         JSON.stringify([
           { key: "mod+j", command: "terminal.toggle" },
           { key: "mod+shift+d+o", command: "terminal.new" },

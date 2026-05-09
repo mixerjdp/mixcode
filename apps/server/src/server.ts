@@ -1,5 +1,4 @@
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import { Effect, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 
 import { ServerConfig } from "./config.ts";
@@ -87,7 +86,7 @@ import {
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
-import * as NetService from "@t3tools/shared/Net";
+import { NetService } from "@t3tools/shared/Net";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 
 const PtyAdapterLive = Layer.unwrap(
@@ -334,7 +333,7 @@ export const makeServerLayer = Layer.unwrap(
             return;
           }
 
-          const state = yield* makePersistedServerRuntimeState({
+          const state = makePersistedServerRuntimeState({
             config,
             port: address.port,
           });
@@ -419,4 +418,8 @@ export const makeServerLayer = Layer.unwrap(
 );
 
 // Important: Only `ServerConfig` should be provided by the CLI layer!!! Don't let other requirements leak into the launch layer.
-export const runServer = Layer.launch(makeServerLayer);
+export const runServer = Layer.launch(makeServerLayer) satisfies Effect.Effect<
+  never,
+  any,
+  ServerConfig
+>;

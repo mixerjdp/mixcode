@@ -5,8 +5,7 @@ import {
   OrchestrationSession,
   OrchestrationThread,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import { Effect, Schema } from "effect";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
@@ -47,14 +46,15 @@ function updateThread(
 }
 
 function decodeForEvent<A>(
-  schema: Schema.Decoder<A, never>,
+  schema: Schema.Schema<A>,
   value: unknown,
   eventType: OrchestrationEvent["type"],
   field: string,
 ): Effect.Effect<A, OrchestrationProjectorDecodeError> {
-  return Schema.decodeUnknownEffect(schema)(value).pipe(
-    Effect.mapError(toProjectorDecodeError(`${eventType}:${field}`)),
-  );
+  return Effect.try({
+    try: () => Schema.decodeUnknownSync(schema as any)(value),
+    catch: (error) => toProjectorDecodeError(`${eventType}:${field}`)(error as Schema.SchemaError),
+  });
 }
 
 function retainThreadMessagesAfterRevert(

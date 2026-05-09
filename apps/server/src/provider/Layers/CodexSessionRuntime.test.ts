@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import { Effect, Schema } from "effect";
 import { describe, it } from "vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
@@ -16,7 +15,6 @@ import {
   isRecoverableThreadResumeError,
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
-const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
 function makeThreadOpenResponse(
   threadId: string,
@@ -270,7 +268,7 @@ describe("openCodexThread", () => {
         }),
       ),
       (error: unknown) =>
-        isCodexAppServerRequestError(error) &&
+        Schema.is(CodexErrors.CodexAppServerRequestError)(error) &&
         error.errorMessage === "timed out waiting for server",
     );
   });

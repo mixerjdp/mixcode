@@ -7,19 +7,20 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
-import * as Deferred from "effect/Deferred";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
-import * as Queue from "effect/Queue";
-import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
-import * as Context from "effect/Context";
-import * as Console from "effect/Console";
-import * as DateTime from "effect/DateTime";
+import {
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Path,
+  Queue,
+  Ref,
+  Scope,
+  Context,
+  Console,
+} from "effect";
 
 import { ServerConfig } from "./config.ts";
 import { Keybindings } from "./keybindings.ts";
@@ -187,7 +188,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
       let nextProjectDefaultModelSelection: ModelSelection;
 
       if (Option.isNone(existingProject)) {
-        const createdAt = DateTime.formatIso(yield* DateTime.now);
+        const createdAt = new Date().toISOString();
         nextProjectId = ProjectId.make(crypto.randomUUID());
         const bootstrapProjectTitle = path.basename(serverConfig.cwd) || "project";
         nextProjectDefaultModelSelection = getAutoBootstrapDefaultModelSelection();
@@ -209,7 +210,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
       const existingThreadId =
         yield* projectionReadModelQuery.getFirstActiveThreadIdByProjectId(nextProjectId);
       if (Option.isNone(existingThreadId)) {
-        const createdAt = DateTime.formatIso(yield* DateTime.now);
+        const createdAt = new Date().toISOString();
         const createdThreadId = ThreadId.make(crypto.randomUUID());
         yield* orchestrationEngine.dispatch({
           type: "thread.create",
@@ -422,7 +423,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
           version: 1,
           type: "ready",
           payload: {
-            at: DateTime.formatIso(yield* DateTime.now),
+            at: new Date().toISOString(),
             environment: yield* serverEnvironment.getDescriptor,
           },
         }),

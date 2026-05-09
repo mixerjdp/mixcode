@@ -8,10 +8,7 @@
  *
  * @module RuntimeReceiptBus
  */
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
-import * as Stream from "effect/Stream";
+import { Effect, Layer, PubSub, Stream } from "effect";
 
 import {
   RuntimeReceiptBus,

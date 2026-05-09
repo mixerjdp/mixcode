@@ -1,5 +1,4 @@
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
+import { Context, Effect } from "effect";
 import type {
   ChangeRequest,
   ChangeRequestState,

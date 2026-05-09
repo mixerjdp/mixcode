@@ -6,13 +6,7 @@
  *
  * @module ServerConfig
  */
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as LogLevel from "effect/LogLevel";
-import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
-import * as Context from "effect/Context";
+import { Effect, FileSystem, Layer, LogLevel, Path, Schema, Context } from "effect";
 
 export const DEFAULT_PORT = 3773;
 

@@ -1,10 +1,7 @@
 import * as NodeOS from "node:os";
 
 import { ProviderDriverKind, type CodexSettings } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import * as PlatformError from "effect/PlatformError";
 
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -74,7 +71,6 @@ export class CodexShadowHomeError extends Schema.TaggedErrorClass<CodexShadowHom
     return this.detail;
   }
 }
-const isCodexShadowHomeError = Schema.is(CodexShadowHomeError);
 
 type LinkState =
   | {
@@ -89,7 +85,7 @@ type LinkState =
     };
 
 function toShadowHomeError(cause: unknown): CodexShadowHomeError {
-  return isCodexShadowHomeError(cause)
+  return Schema.is(CodexShadowHomeError)(cause)
     ? cause
     : new CodexShadowHomeError({
         detail: "Failed to materialize Codex shadow home.",

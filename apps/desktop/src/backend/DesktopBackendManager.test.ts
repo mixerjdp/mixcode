@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
+import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -24,10 +24,6 @@ import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
-
-const decodeDesktopBackendBootstrap = Schema.decodeEffect(
-  Schema.fromJsonString(DesktopBackendBootstrap),
-);
 
 const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "/electron",
@@ -98,7 +94,7 @@ const healthyHttpClientLayer = httpClientLayer((request) =>
 );
 
 function decodeBootstrap(raw: string) {
-  return decodeDesktopBackendBootstrap(raw);
+  return Schema.decodeEffect(Schema.fromJsonString(DesktopBackendBootstrap))(raw);
 }
 
 function makeManagerLayer(input: {

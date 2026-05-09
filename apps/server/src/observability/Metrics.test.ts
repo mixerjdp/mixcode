@@ -1,10 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind } from "@t3tools/contracts";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as Metric from "effect/Metric";
-import * as TestClock from "effect/testing/TestClock";
+import { Duration, Effect, Fiber, Metric } from "effect";
+import { TestClock } from "effect/testing";
 
 import { withMetrics } from "./Metrics.ts";
 

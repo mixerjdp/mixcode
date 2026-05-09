@@ -38,8 +38,6 @@ const JsonSchemaDocument = Schema.StructWithRest(
   }),
   [Schema.Record(Schema.String, Schema.Json)],
 );
-const decodeGithubContentEntries = Schema.decodeEffect(Schema.fromJsonString(GithubContentEntries));
-const decodeJsonSchemaDocument = Schema.decodeEffect(Schema.fromJsonString(JsonSchemaDocument));
 
 interface GeneratedPaths {
   readonly generatedDir: string;
@@ -180,7 +178,7 @@ const fetchText = Effect.fn("fetchText")(function* (url: string) {
 
 const fetchDirectoryEntries = Effect.fn("fetchDirectoryEntries")(function* (path: string) {
   const raw = yield* fetchText(`${GITHUB_API_BASE}/${path}?ref=${UPSTREAM_REF}`);
-  return yield* decodeGithubContentEntries(raw);
+  return yield* Schema.decodeEffect(Schema.fromJsonString(GithubContentEntries))(raw);
 });
 
 function collectSchemaEntries(
@@ -547,7 +545,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
 
   for (const file of jsonSchemaFiles) {
     const raw = yield* fetchText(file.downloadUrl);
-    const parsed = yield* decodeJsonSchemaDocument(raw);
+    const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(JsonSchemaDocument))(raw);
     const localDefinitionNames = new Map(
       Object.keys(parsed.definitions ?? {}).map((definitionName) => [
         definitionName,

@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
 /**
  * Open - Browser/editor launch service interface.
  *
@@ -11,9 +10,7 @@ import { spawn } from "node:child_process";
 
 import { EDITORS, OpenError, type EditorId } from "@t3tools/contracts";
 import { isCommandAvailable, type CommandAvailabilityOptions } from "@t3tools/shared/shell";
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import { Context, Effect, Layer } from "effect";
 
 // ==============================
 // Definitions

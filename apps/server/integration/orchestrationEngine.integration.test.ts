@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import fs from "node:fs";
 import path from "node:path";
 
@@ -18,10 +17,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import { Effect, Option, Schema } from "effect";
 
 import type { TestTurnResponse } from "./TestProviderAdapter.integration.ts";
 import {
@@ -51,7 +47,7 @@ const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_PROVIDER = ProviderDriverKind.make("claudeAgent");
 
 function nowIso() {
-  return "2026-05-01T00:00:00.000Z";
+  return new Date().toISOString();
 }
 
 class IntegrationWaitTimeoutError extends Schema.TaggedErrorClass<IntegrationWaitTimeoutError>()(
@@ -68,14 +64,14 @@ function waitForSync<A>(
   timeoutMs = 10_000,
 ): Effect.Effect<A, never> {
   return Effect.gen(function* () {
-    const deadline = (yield* Clock.currentTimeMillis) + timeoutMs;
+    const deadline = Date.now() + timeoutMs;
 
     while (true) {
       const value = read();
       if (predicate(value)) {
         return value;
       }
-      if ((yield* Clock.currentTimeMillis) >= deadline) {
+      if (Date.now() >= deadline) {
         return yield* Effect.die(new IntegrationWaitTimeoutError({ description }));
       }
       yield* Effect.sleep(10);
@@ -160,7 +156,6 @@ const startTurn = (input: {
   readonly messageId: string;
   readonly text: string;
   readonly modelSelection?: ModelSelection;
-  readonly createdAt?: string;
 }) =>
   input.harness.engine.dispatch({
     type: "thread.turn.start",
@@ -179,7 +174,7 @@ const startTurn = (input: {
       : {}),
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     runtimeMode: "approval-required",
-    createdAt: input.createdAt ?? nowIso(),
+    createdAt: nowIso(),
   });
 
 it.live("runs a single turn end-to-end and persists checkpoint state in sqlite + git", () =>
@@ -760,7 +755,6 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
         commandId: "cmd-turn-start-revert-1",
         messageId: "msg-user-revert-1",
         text: "First edit",
-        createdAt: "2026-02-24T10:04:59.900Z",
       });
 
       yield* harness.waitForThread(
@@ -819,7 +813,6 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
         commandId: "cmd-turn-start-revert-2",
         messageId: "msg-user-revert-2",
         text: "Second edit",
-        createdAt: "2026-02-24T10:05:00.900Z",
       });
 
       yield* harness.waitForThread(

@@ -40,16 +40,7 @@ import {
   type ProviderDriverKind,
   type ServerProvider,
 } from "@t3tools/contracts";
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Equal from "effect/Equal";
-import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
+import { Context, Effect, Equal, Exit, Layer, PubSub, Ref, Schema, Scope, Stream } from "effect";
 
 import { buildUnavailableProviderSnapshot } from "../unavailableProviderSnapshot.ts";
 import {
@@ -124,7 +115,7 @@ const buildEntry = <R>(input: {
     if (!driver) {
       return {
         kind: "unavailable" as const,
-        snapshot: yield* buildUnavailableProviderSnapshot({
+        snapshot: buildUnavailableProviderSnapshot({
           driverKind: entry.driver,
           instanceId,
           displayName: entry.displayName,
@@ -146,7 +137,7 @@ const buildEntry = <R>(input: {
       });
       return {
         kind: "unavailable" as const,
-        snapshot: yield* buildUnavailableProviderSnapshot({
+        snapshot: buildUnavailableProviderSnapshot({
           driverKind: entry.driver,
           instanceId,
           displayName: entry.displayName,
@@ -184,7 +175,7 @@ const buildEntry = <R>(input: {
       yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
       return {
         kind: "unavailable" as const,
-        snapshot: yield* buildUnavailableProviderSnapshot({
+        snapshot: buildUnavailableProviderSnapshot({
           driverKind: entry.driver,
           instanceId,
           displayName: entry.displayName,

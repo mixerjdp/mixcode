@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
+import { Effect, Layer, Schema } from "effect";
 import { beforeEach } from "vitest";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
@@ -16,7 +14,6 @@ import {
 } from "../opencodeRuntime.ts";
 import { checkOpenCodeProviderStatus } from "./OpenCodeProvider.ts";
 import type { OpenCodeInventory } from "../opencodeRuntime.ts";
-const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 
@@ -107,7 +104,7 @@ const testLayer = Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe
 );
 
 const makeOpenCodeSettings = (overrides?: Partial<OpenCodeSettings>): OpenCodeSettings =>
-  decodeOpenCodeSettings({
+  Schema.decodeSync(OpenCodeSettings)({
     enabled: true,
     binaryPath: "opencode",
     serverUrl: "",
