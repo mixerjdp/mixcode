@@ -2914,12 +2914,20 @@ export default function ChatView(props: ChatViewProps) {
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread) return;
-    await api.orchestration.dispatchCommand({
-      type: "thread.turn.interrupt",
-      commandId: newCommandId(),
-      threadId: activeThread.id,
-      createdAt: new Date().toISOString(),
-    });
+
+    await api.orchestration
+      .dispatchCommand({
+        type: "thread.session.stop",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        createdAt: new Date().toISOString(),
+      })
+      .catch((err: unknown) => {
+        setThreadError(
+          activeThread.id,
+          err instanceof Error ? err.message : "Failed to stop the current session.",
+        );
+      });
   };
 
   const onRespondToApproval = useCallback(

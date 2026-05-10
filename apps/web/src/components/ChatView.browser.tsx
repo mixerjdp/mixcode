@@ -375,6 +375,53 @@ function createSnapshotForTargetUser(options: {
   };
 }
 
+function createSnapshotWithRunningTurn(options: {
+  targetMessageId: MessageId;
+  targetText: string;
+  turnId: TurnId;
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: options.targetMessageId,
+    targetText: options.targetText,
+    sessionStatus: "running",
+  });
+
+  const thread = snapshot.threads.find((entry) => entry.id === THREAD_ID);
+  if (!thread) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    threads: [
+      {
+        ...thread,
+        latestTurn: {
+          turnId: options.turnId,
+          state: "running",
+          requestedAt: isoAt(1_000),
+          startedAt: isoAt(1_001),
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        session: {
+          threadId: THREAD_ID,
+          status: "running",
+          providerName: thread.session?.providerName ?? "codex",
+          ...(thread.session?.providerInstanceId !== undefined
+            ? { providerInstanceId: thread.session.providerInstanceId }
+            : {}),
+          runtimeMode: thread.session?.runtimeMode ?? "full-access",
+          activeTurnId: options.turnId,
+          lastError: thread.session?.lastError ?? null,
+          updatedAt: isoAt(1_001),
+        },
+        updatedAt: isoAt(1_001),
+      },
+    ],
+  };
+}
+
 function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   return {
     snapshot,
@@ -3727,6 +3774,59 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("stops the running session when pressing the stop button", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithRunningTurn({
+        targetMessageId: "msg-user-stop-button-interrupt" as MessageId,
+        targetText: "stop button interrupt target",
+        turnId: "turn-stop-button-interrupt" as TurnId,
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const stopButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Stop generation"]'),
+        "Unable to find stop generation button.",
+      );
+
+      stopButton.click();
+
+      await vi.waitFor(
+        () => {
+          const stopRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.session.stop",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                threadId?: string;
+              }
+            | undefined;
+
+          expect(stopRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.session.stop",
+            threadId: THREAD_ID,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

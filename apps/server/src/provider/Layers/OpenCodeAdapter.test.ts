@@ -2,7 +2,19 @@ import assert from "node:assert/strict";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Context, Effect, Exit, Fiber, Layer, Option, Schema, Scope, Stream } from "effect";
+import {
+  Context,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
+import { TestClock } from "effect/testing";
 import { beforeEach } from "vitest";
 
 import {
@@ -38,6 +50,11 @@ type MessageEntry = {
   info: {
     id: string;
     role: "user" | "assistant";
+    time?: {
+      created: number;
+      completed?: number;
+    };
+    parentID?: string;
   };
   parts: Array<unknown>;
 };
@@ -51,10 +68,12 @@ const runtimeMock = {
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
+    messageCalls: 0,
     promptAsyncError: null as Error | null,
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    subscribedEventsGate: null as Promise<void> | null,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -64,10 +83,12 @@ const runtimeMock = {
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
+    this.state.messageCalls = 0;
     this.state.promptAsyncError = null;
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.subscribedEventsGate = null;
   },
 };
 
@@ -130,7 +151,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             throw runtimeMock.state.promptAsyncError;
           }
         },
-        messages: async () => ({ data: runtimeMock.state.messages }),
+        messages: async () => {
+          runtimeMock.state.messageCalls += 1;
+          return { data: runtimeMock.state.messages };
+        },
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
           runtimeMock.state.revertCalls.push({
             sessionID,
@@ -153,6 +177,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       event: {
         subscribe: async () => ({
           stream: (async function* () {
+            if (runtimeMock.state.subscribedEventsGate) {
+              yield* Effect.promise(() => runtimeMock.state.subscribedEventsGate!).pipe(
+                Effect.asVoid,
+              );
+            }
+
             for (const event of runtimeMock.state.subscribedEvents) {
               yield event;
             }
@@ -747,5 +777,112 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       assert.equal(sessions[0]?.threadId, "thread-native-log-failure");
       assert.deepEqual(closeCallsDuringRun, []);
     }),
+  );
+
+  it.effect("treats session.idle as a completed turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-session-idle-completes");
+      let releaseSubscribedEventsGate: (() => void) | undefined;
+      runtimeMock.state.subscribedEventsGate = new Promise<void>((resolve) => {
+        releaseSubscribedEventsGate = resolve;
+      });
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Please respond",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/claude-sonnet-4-5",
+        ),
+      });
+
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "busy" },
+          },
+        },
+        {
+          type: "session.idle",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+          },
+        },
+      ];
+      releaseSubscribedEventsGate?.();
+
+      yield* sleep(50);
+      const sessions = yield* adapter.listSessions();
+
+      assert.equal(sessions[0]?.status, "ready");
+      assert.equal(sessions[0]?.activeTurnId, undefined);
+    }),
+  );
+
+  it.effect("completes a turn by polling session.messages when no idle event arrives", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-session-messages-completes");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      globalThis.setTimeout(() => {
+        const createdAt = Date.now() + 1000;
+        runtimeMock.state.messages = [
+          {
+            info: {
+              id: "user-message",
+              role: "user",
+              time: { created: createdAt - 10 },
+            },
+            parts: [],
+          },
+          {
+            info: {
+              id: "assistant-message",
+              role: "assistant",
+              time: { created: createdAt, completed: createdAt + 10 },
+              parentID: "user-message",
+            },
+            parts: [],
+          },
+        ];
+      }, 50);
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Please respond",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/claude-sonnet-4-5",
+        ),
+      });
+
+      yield* sleep(100);
+      yield* TestClock.adjust(Duration.seconds(3));
+      yield* sleep(100);
+      assert.ok(
+        runtimeMock.state.messageCalls >= 2,
+        "expected the fallback poller to query messages more than once",
+      );
+      assert.equal(runtimeMock.state.messages.length > 0, true);
+      const sessions = yield* adapter.listSessions();
+
+      assert.equal(sessions[0]?.status, "ready");
+      assert.equal(sessions[0]?.activeTurnId, undefined);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });

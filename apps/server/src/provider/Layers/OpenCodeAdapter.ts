@@ -630,6 +630,21 @@ export function makeOpenCodeAdapter(
       }
     });
 
+    const emitAssistantMessageSnapshot = Effect.fn("emitAssistantMessageSnapshot")(function* (
+      context: OpenCodeSessionContext,
+      message: { id: string; parts: ReadonlyArray<Part> },
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      context.messageRoleById.set(message.id, "assistant");
+      for (const part of message.parts) {
+        context.partById.set(part.id, part);
+        if (part.type === "text" || part.type === "reasoning") {
+          yield* emitAssistantTextDelta(context, part, turnId, raw);
+        }
+      }
+    });
+
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
@@ -886,12 +901,13 @@ export function makeOpenCodeAdapter(
           }
 
           if (event.properties.status.type === "idle" && turnId) {
+            const completedTurnId = turnId;
             context.activeTurnId = undefined;
             updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
                 threadId: context.session.threadId,
-                turnId,
+                turnId: completedTurnId,
                 raw: event,
               })),
               type: "turn.completed",
@@ -900,6 +916,27 @@ export function makeOpenCodeAdapter(
               },
             });
           }
+          break;
+        }
+
+        case "session.idle": {
+          const completedTurnId = context.activeTurnId;
+          if (!completedTurnId) {
+            break;
+          }
+          context.activeTurnId = undefined;
+          updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId: completedTurnId,
+              raw: event,
+            })),
+            type: "turn.completed",
+            payload: {
+              state: "completed",
+            },
+          });
           break;
         }
 
@@ -1141,6 +1178,7 @@ export function makeOpenCodeAdapter(
     const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
       const context = ensureSessionContext(sessions, input.threadId);
       const turnId = TurnId.make(`opencode-turn-${yield* Random.nextUUIDv4}`);
+      const turnStartedAt = Date.now();
       const modelSelection =
         input.modelSelection ??
         (context.session.model
@@ -1245,6 +1283,62 @@ export function makeOpenCodeAdapter(
           }),
         ),
       );
+
+      yield* Effect.gen(function* () {
+        if (yield* Ref.get(context.stopped)) {
+          return;
+        }
+        while (context.activeTurnId === turnId) {
+          const messages = yield* runOpenCodeSdk("session.messages", () =>
+            context.client.session.messages({
+              sessionID: context.openCodeSessionId,
+              limit: 20,
+            }),
+          ).pipe(Effect.mapError(toRequestError));
+          const completedAssistantMessage = (messages.data ?? [])
+            .toReversed()
+            .find(
+              (entry) =>
+                entry.info.role === "assistant" &&
+                entry.info.time.completed !== undefined &&
+                entry.info.time.created >= turnStartedAt,
+            );
+          if (completedAssistantMessage) {
+            yield* emitAssistantMessageSnapshot(
+              context,
+              {
+                id: completedAssistantMessage.info.id,
+                parts: completedAssistantMessage.parts,
+              },
+              turnId,
+              completedAssistantMessage,
+            );
+            context.activeTurnId = undefined;
+            context.activeAgent = undefined;
+            context.activeVariant = undefined;
+            updateProviderSession(
+              context,
+              {
+                status: "ready",
+                model: modelSelection?.model ?? context.session.model,
+              },
+              { clearActiveTurnId: true },
+            );
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: input.threadId,
+                turnId,
+              })),
+              type: "turn.completed",
+              payload: {
+                state: "completed",
+              },
+            });
+            return;
+          }
+          yield* Effect.sleep("500 millis");
+        }
+      }).pipe(Effect.forkIn(context.sessionScope));
 
       return {
         threadId: input.threadId,
