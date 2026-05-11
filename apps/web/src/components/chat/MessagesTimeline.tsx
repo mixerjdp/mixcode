@@ -1015,7 +1015,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
-  const [isExpanded, setIsExpanded] = useState(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>();
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
@@ -1030,6 +1029,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   });
   const canRevealDisclosure =
     disclosureText !== null && shouldShowCommandOutputDisclosure(workEntry.createdAt);
+  const [isExpanded, setIsExpanded] = useState(false);
   const preview =
     !isCommandEntry && workEntry.detail && workEntry.detail.length > 0
       ? (summarizeToolDetailPreview(workEntry.detail) ?? rawPreview)

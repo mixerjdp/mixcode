@@ -669,6 +669,38 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["turn-2"]);
   });
 
+  it("keeps turn-local activities that were emitted without a turn id during the active turn window", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "turn-1-tool",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+      makeActivity({
+        id: "turn-1-after",
+        createdAt: "2026-02-23T00:00:07.000Z",
+        summary: "Tool call complete",
+        kind: "tool.completed",
+        turnId: "turn-1",
+      }),
+      makeActivity({
+        id: "old-tool",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(
+      activities,
+      TurnId.make("turn-1"),
+      "2026-02-23T00:00:02.500Z",
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual(["turn-1-tool", "turn-1-after"]);
+  });
+
   it("omits checkpoint captured info entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1016,8 +1048,14 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     const entries = deriveWorkLogEntries(activities, undefined);
-    expect(entries).toHaveLength(1);
+    expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({
+      id: "grep-update",
+      toolTitle: "grep",
+      itemType: "web_search",
+    });
+    expect(entries[0]?.detail).toBeUndefined();
+    expect(entries[1]).toMatchObject({
       id: "grep-complete",
       toolTitle: "grep",
       detail: "19 files",
@@ -1025,7 +1063,7 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
-  it("uses completed read-file output previews and still collapses the same tool call", () => {
+  it("keeps completed read-file output previews as separate entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "read-update",
@@ -1065,8 +1103,14 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     const entries = deriveWorkLogEntries(activities, undefined);
-    expect(entries).toHaveLength(1);
+    expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({
+      id: "read-update",
+      toolTitle: "Read File",
+      itemType: "dynamic_tool_call",
+    });
+    expect(entries[0]?.detail).toBeUndefined();
+    expect(entries[1]).toMatchObject({
       id: "read-complete",
       toolTitle: "Read File",
       detail: 'import * as Effect from "effect/Effect"',
@@ -1109,7 +1153,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBeUndefined();
   });
 
-  it("collapses legacy completed tool rows that are missing tool metadata", () => {
+  it("keeps legacy completed tool rows that are missing tool metadata as separate entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "legacy-read-update",
@@ -1141,16 +1185,22 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     const entries = deriveWorkLogEntries(activities, undefined);
-    expect(entries).toHaveLength(1);
+    expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({
-      id: "legacy-read-complete",
+      id: "legacy-read-update",
       toolTitle: "Read File",
       itemType: "dynamic_tool_call",
     });
     expect(entries[0]?.detail).toBeUndefined();
+    expect(entries[1]).toMatchObject({
+      id: "legacy-read-complete",
+      toolTitle: "Read File",
+      itemType: "dynamic_tool_call",
+    });
+    expect(entries[1]?.detail).toBeUndefined();
   });
 
-  it("collapses repeated lifecycle updates for the same tool call into one entry", () => {
+  it("keeps repeated lifecycle updates for the same tool call as separate entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "tool-update-1",
@@ -1194,13 +1244,33 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
 
-    expect(entries).toHaveLength(1);
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "tool-update-1",
+      "tool-update-2",
+      "tool-complete",
+    ]);
     expect(entries[0]).toMatchObject({
+      id: "tool-update-1",
+      createdAt: "2026-02-23T00:00:01.000Z",
+      label: "Tool call",
+      detail: 'Read: {"file_path":"/tmp/app.ts"}',
+      itemType: "dynamic_tool_call",
+      toolTitle: "Tool call",
+    });
+    expect(entries[1]).toMatchObject({
+      id: "tool-update-2",
+      createdAt: "2026-02-23T00:00:02.000Z",
+      label: "Tool call",
+      detail: 'Read: {"file_path":"/tmp/app.ts"}',
+      command: "sed -n 1,40p /tmp/app.ts",
+      itemType: "dynamic_tool_call",
+      toolTitle: "Tool call",
+    });
+    expect(entries[2]).toMatchObject({
       id: "tool-complete",
       createdAt: "2026-02-23T00:00:03.000Z",
       label: "Tool call completed",
       detail: 'Read: {"file_path":"/tmp/app.ts"}',
-      command: "sed -n 1,40p /tmp/app.ts",
       itemType: "dynamic_tool_call",
       toolTitle: "Tool call",
     });
@@ -1256,10 +1326,15 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
 
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-1-complete", "tool-2-complete"]);
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "tool-1-update",
+      "tool-1-complete",
+      "tool-2-update",
+      "tool-2-complete",
+    ]);
   });
 
-  it("collapses same-timestamp lifecycle rows even when completed sorts before updated by id", () => {
+  it("keeps same-timestamp lifecycle rows separate even when completed sorts before updated by id", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "z-update-earlier",
@@ -1298,8 +1373,11 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.id).toBe("a-complete-same-timestamp");
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "z-update-earlier",
+      "z-update-same-timestamp",
+      "a-complete-same-timestamp",
+    ]);
   });
 });
 

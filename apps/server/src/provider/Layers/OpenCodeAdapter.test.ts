@@ -885,4 +885,187 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       assert.equal(sessions[0]?.activeTurnId, undefined);
     }).pipe(Effect.provide(TestClock.layer())),
   );
+
+  it.effect(
+    "keeps polling past reasoning-only assistant snapshots until a renderable answer appears",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-session-reasoning-then-answer");
+
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        globalThis.setTimeout(() => {
+          const createdAt = Date.now() + 1000;
+          runtimeMock.state.messages = [
+            {
+              info: {
+                id: "assistant-reasoning-only",
+                role: "assistant",
+                time: { created: createdAt, completed: createdAt + 10 },
+              },
+              parts: [
+                {
+                  id: "reasoning-part",
+                  messageID: "assistant-reasoning-only",
+                  type: "reasoning",
+                  text: "Let me think this through first.",
+                  time: { start: createdAt, end: createdAt + 5 },
+                },
+              ],
+            },
+          ];
+        }, 25);
+
+        globalThis.setTimeout(() => {
+          const createdAt = Date.now() + 2000;
+          runtimeMock.state.messages = [
+            ...runtimeMock.state.messages,
+            {
+              info: {
+                id: "assistant-final-answer",
+                role: "assistant",
+                time: { created: createdAt, completed: createdAt + 10 },
+              },
+              parts: [
+                {
+                  id: "final-answer-part",
+                  messageID: "assistant-final-answer",
+                  type: "text",
+                  text: "Here is the actual answer.",
+                  time: { start: createdAt, end: createdAt + 5 },
+                },
+              ],
+            },
+          ];
+        }, 100);
+
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Please respond",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("opencode"),
+            "anthropic/claude-sonnet-4-5",
+          ),
+        });
+
+        yield* sleep(100);
+        yield* TestClock.adjust(Duration.seconds(3));
+        yield* sleep(100);
+
+        assert.ok(
+          runtimeMock.state.messageCalls >= 2,
+          "expected the fallback poller to keep querying until a renderable assistant answer exists",
+        );
+
+        const sessions = yield* adapter.listSessions();
+        assert.equal(sessions[0]?.status, "ready");
+        assert.equal(sessions[0]?.activeTurnId, undefined);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "reconstructs tool lifecycle entries from session snapshots when live events miss them",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-session-tool-snapshot");
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.threadId === threadId),
+          Stream.take(8),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        globalThis.setTimeout(() => {
+          const createdAt = Date.now() + 1000;
+          runtimeMock.state.messages = [
+            {
+              info: {
+                id: "assistant-with-tool",
+                role: "assistant",
+                time: { created: createdAt, completed: createdAt + 40 },
+              },
+              parts: [
+                {
+                  id: "reasoning-part",
+                  messageID: "assistant-with-tool",
+                  type: "reasoning",
+                  text: "Let me inspect the repo first.",
+                  time: { start: createdAt, end: createdAt + 10 },
+                },
+                {
+                  id: "tool-part",
+                  messageID: "assistant-with-tool",
+                  type: "tool",
+                  tool: "bash",
+                  callID: "tool-call-1",
+                  state: {
+                    status: "completed",
+                    output: "src\npackages\n",
+                    title: "bash",
+                    time: { start: createdAt + 10, end: createdAt + 20 },
+                  },
+                },
+                {
+                  id: "final-answer-part",
+                  messageID: "assistant-with-tool",
+                  type: "text",
+                  text: "Here is the answer.",
+                  time: { start: createdAt + 20, end: createdAt + 30 },
+                },
+              ],
+            },
+          ] as Array<MessageEntry>;
+        }, 25);
+
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Run one tool call",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("opencode"),
+            "anthropic/claude-sonnet-4-5",
+          ),
+        });
+
+        yield* sleep(100);
+        yield* TestClock.adjust(Duration.seconds(3));
+        yield* sleep(100);
+
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        assert.ok(
+          events.some(
+            (event) =>
+              event.type === "item.completed" && event.payload.itemType === "command_execution",
+          ),
+        );
+        assert.ok(
+          events.some(
+            (event) =>
+              event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+          ),
+        );
+        assert.ok(
+          events.some(
+            (event) =>
+              event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+          ),
+        );
+        assert.equal(events.at(-1)?.type, "turn.completed");
+
+        const sessions = yield* adapter.listSessions();
+        assert.equal(sessions[0]?.status, "ready");
+        assert.equal(sessions[0]?.activeTurnId, undefined);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
 });

@@ -66,11 +66,13 @@ interface OpenCodeSessionContext {
   readonly messageRoleById: Map<string, "user" | "assistant">;
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
+  readonly emittedToolStateByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
+  turnStartedAt: number | undefined;
   /**
    * One-shot guard flipped by `stopOpenCodeContext` / `emitUnexpectedExit`.
    * The session lifecycle is owned by `sessionScope`; this Ref exists only
@@ -294,6 +296,10 @@ function textFromPart(part: Part): string | undefined {
   }
 }
 
+function hasRenderableAssistantTextPart(parts: ReadonlyArray<Part>): boolean {
+  return parts.some((part) => part.type === "text" && part.text.trim().length > 0);
+}
+
 function commonPrefixLength(left: string, right: string): number {
   let index = 0;
   while (index < left.length && index < right.length && left[index] === right[index]) {
@@ -376,6 +382,28 @@ function detailFromToolPart(part: Extract<Part, { type: "tool" }>): string | und
     default:
       return undefined;
   }
+}
+
+function toolLifecycleFingerprint(part: Extract<Part, { type: "tool" }>): string {
+  const state = part.state as {
+    readonly status: string;
+    readonly title?: string;
+    readonly output?: string;
+    readonly error?: string;
+    readonly time?: {
+      readonly start?: number;
+      readonly end?: number;
+    };
+  };
+  return [
+    part.tool,
+    state.status,
+    state.title ?? "",
+    state.output ?? "",
+    state.error ?? "",
+    state.time?.start ?? 0,
+    state.time?.end ?? 0,
+  ].join("\u001f");
 }
 
 function toolStateCreatedAt(part: Extract<Part, { type: "tool" }>): string | undefined {
@@ -630,6 +658,56 @@ export function makeOpenCodeAdapter(
       }
     });
 
+    const emitToolLifecycleSnapshot = Effect.fn("emitToolLifecycleSnapshot")(function* (
+      context: OpenCodeSessionContext,
+      part: Extract<Part, { type: "tool" }>,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      const fingerprint = toolLifecycleFingerprint(part);
+      const previousFingerprint = context.emittedToolStateByPartId.get(part.id);
+      if (previousFingerprint === fingerprint) {
+        return;
+      }
+      context.emittedToolStateByPartId.set(part.id, fingerprint);
+      context.partById.set(part.id, part);
+      appendTurnItem(context, turnId, part);
+
+      const itemType = toToolLifecycleItemType(part.tool);
+      const title = part.state.status === "running" ? (part.state.title ?? part.tool) : part.tool;
+      const detail = detailFromToolPart(part);
+
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          itemId: part.callID,
+          createdAt: toolStateCreatedAt(part),
+          raw,
+        })),
+        type:
+          part.state.status === "pending"
+            ? "item.started"
+            : part.state.status === "completed" || part.state.status === "error"
+              ? "item.completed"
+              : "item.updated",
+        payload: {
+          itemType,
+          ...(part.state.status === "error"
+            ? { status: "failed" as const }
+            : part.state.status === "completed"
+              ? { status: "completed" as const }
+              : { status: "inProgress" as const }),
+          ...(title ? { title } : {}),
+          ...(detail ? { detail } : {}),
+          data: {
+            tool: part.tool,
+            state: part.state,
+          },
+        },
+      });
+    });
+
     const emitAssistantMessageSnapshot = Effect.fn("emitAssistantMessageSnapshot")(function* (
       context: OpenCodeSessionContext,
       message: { id: string; parts: ReadonlyArray<Part> },
@@ -641,8 +719,43 @@ export function makeOpenCodeAdapter(
         context.partById.set(part.id, part);
         if (part.type === "text" || part.type === "reasoning") {
           yield* emitAssistantTextDelta(context, part, turnId, raw);
+        } else if (part.type === "tool") {
+          yield* emitToolLifecycleSnapshot(context, part, turnId, raw);
         }
       }
+    });
+
+    const reconcileCompletedAssistantMessagesForTurn = Effect.fn(
+      "reconcileCompletedAssistantMessagesForTurn",
+    )(function* (context: OpenCodeSessionContext, turnId: TurnId, turnStartedAt: number) {
+      const messages = yield* runOpenCodeSdk("session.messages", () =>
+        context.client.session.messages({
+          sessionID: context.openCodeSessionId,
+          limit: 20,
+        }),
+      ).pipe(Effect.mapError(toRequestError));
+      const completedAssistantMessages = (messages.data ?? [])
+        .filter(
+          (entry) =>
+            entry.info.role === "assistant" &&
+            entry.info.time.completed !== undefined &&
+            entry.info.time.created >= turnStartedAt,
+        )
+        .toSorted((left, right) => left.info.time.created - right.info.time.created);
+      let hasRenderableAssistantText = false;
+      for (const entry of completedAssistantMessages) {
+        hasRenderableAssistantText ||= hasRenderableAssistantTextPart(entry.parts);
+        yield* emitAssistantMessageSnapshot(
+          context,
+          {
+            id: entry.info.id,
+            parts: entry.parts,
+          },
+          turnId,
+          entry,
+        );
+      }
+      return hasRenderableAssistantText;
     });
 
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
@@ -742,42 +855,7 @@ export function makeOpenCodeAdapter(
           }
 
           if (part.type === "tool") {
-            const itemType = toToolLifecycleItemType(part.tool);
-            const title =
-              part.state.status === "running" ? (part.state.title ?? part.tool) : part.tool;
-            const detail = detailFromToolPart(part);
-            const payload = {
-              itemType,
-              ...(part.state.status === "error"
-                ? { status: "failed" as const }
-                : part.state.status === "completed"
-                  ? { status: "completed" as const }
-                  : { status: "inProgress" as const }),
-              ...(title ? { title } : {}),
-              ...(detail ? { detail } : {}),
-              data: {
-                tool: part.tool,
-                state: part.state,
-              },
-            };
-            const runtimeEvent: ProviderRuntimeEvent = {
-              ...(yield* buildEventBase({
-                threadId: context.session.threadId,
-                turnId,
-                itemId: part.callID,
-                createdAt: toolStateCreatedAt(part),
-                raw: event,
-              })),
-              type:
-                part.state.status === "pending"
-                  ? "item.started"
-                  : part.state.status === "completed" || part.state.status === "error"
-                    ? "item.completed"
-                    : "item.updated",
-              payload,
-            };
-            appendTurnItem(context, turnId, part);
-            yield* emit(runtimeEvent);
+            yield* emitToolLifecycleSnapshot(context, part, turnId, event);
           }
           break;
         }
@@ -902,7 +980,13 @@ export function makeOpenCodeAdapter(
 
           if (event.properties.status.type === "idle" && turnId) {
             const completedTurnId = turnId;
+            yield* reconcileCompletedAssistantMessagesForTurn(
+              context,
+              completedTurnId,
+              context.turnStartedAt ?? Date.now(),
+            );
             context.activeTurnId = undefined;
+            context.turnStartedAt = undefined;
             updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
@@ -924,7 +1008,13 @@ export function makeOpenCodeAdapter(
           if (!completedTurnId) {
             break;
           }
+          yield* reconcileCompletedAssistantMessagesForTurn(
+            context,
+            completedTurnId,
+            context.turnStartedAt ?? Date.now(),
+          );
           context.activeTurnId = undefined;
+          context.turnStartedAt = undefined;
           updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
           yield* emit({
             ...(yield* buildEventBase({
@@ -944,6 +1034,7 @@ export function makeOpenCodeAdapter(
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
           context.activeTurnId = undefined;
+          context.turnStartedAt = undefined;
           updateProviderSession(
             context,
             {
@@ -1144,12 +1235,14 @@ export function makeOpenCodeAdapter(
           pendingQuestions: new Map(),
           partById: new Map(),
           emittedTextByPartId: new Map(),
+          emittedToolStateByPartId: new Map(),
           messageRoleById: new Map(),
           completedAssistantPartIds: new Set(),
           turns: [],
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
+          turnStartedAt: undefined,
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };
@@ -1221,6 +1314,7 @@ export function makeOpenCodeAdapter(
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
       context.activeTurnId = turnId;
+      context.turnStartedAt = turnStartedAt;
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
       updateProviderSession(
@@ -1259,6 +1353,7 @@ export function makeOpenCodeAdapter(
         Effect.tapError((requestError) =>
           Effect.gen(function* () {
             context.activeTurnId = undefined;
+            context.turnStartedAt = undefined;
             context.activeAgent = undefined;
             context.activeVariant = undefined;
             updateProviderSession(
@@ -1289,31 +1384,14 @@ export function makeOpenCodeAdapter(
           return;
         }
         while (context.activeTurnId === turnId) {
-          const messages = yield* runOpenCodeSdk("session.messages", () =>
-            context.client.session.messages({
-              sessionID: context.openCodeSessionId,
-              limit: 20,
-            }),
-          ).pipe(Effect.mapError(toRequestError));
-          const completedAssistantMessage = (messages.data ?? [])
-            .toReversed()
-            .find(
-              (entry) =>
-                entry.info.role === "assistant" &&
-                entry.info.time.completed !== undefined &&
-                entry.info.time.created >= turnStartedAt,
-            );
-          if (completedAssistantMessage) {
-            yield* emitAssistantMessageSnapshot(
-              context,
-              {
-                id: completedAssistantMessage.info.id,
-                parts: completedAssistantMessage.parts,
-              },
-              turnId,
-              completedAssistantMessage,
-            );
+          const hasRenderableAssistantText = yield* reconcileCompletedAssistantMessagesForTurn(
+            context,
+            turnId,
+            context.turnStartedAt ?? turnStartedAt,
+          );
+          if (hasRenderableAssistantText) {
             context.activeTurnId = undefined;
+            context.turnStartedAt = undefined;
             context.activeAgent = undefined;
             context.activeVariant = undefined;
             updateProviderSession(
