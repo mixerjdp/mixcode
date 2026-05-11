@@ -25,6 +25,8 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionThreadMemoryRepository } from "../../persistence/Services/ProjectionThreadMemory.ts";
+import { ProjectionThreadMemoryRepositoryLive } from "../../persistence/Layers/ProjectionThreadMemory.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -33,6 +35,12 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  buildThreadMemorySummary,
+  estimateThreadMemoryTokens,
+  modelSelectionModel,
+  shouldCompactThreadMemory,
+} from "../ThreadMemory.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
@@ -633,6 +641,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const projectionThreadMemoryRepository = yield* ProjectionThreadMemoryRepository;
   const serverSettingsService = yield* ServerSettingsService;
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
@@ -677,6 +686,71 @@ const make = Effect.gen(function* () {
     return yield* projectionSnapshotQuery
       .getThreadShellById(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
+  });
+
+  const maybeCompactThreadMemory = Effect.fn("maybeCompactThreadMemory")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+  }) {
+    const detailedThread = yield* resolveThreadDetail(input.threadId);
+    if (!detailedThread) {
+      return;
+    }
+    const existingMemory = yield* projectionThreadMemoryRepository
+      .getByThreadId({ threadId: input.threadId })
+      .pipe(Effect.map(Option.getOrNull));
+    if (
+      !shouldCompactThreadMemory({
+        memory: existingMemory,
+        messages: detailedThread.messages,
+      })
+    ) {
+      return;
+    }
+
+    const summary = buildThreadMemorySummary({
+      previousSummary: existingMemory?.summary ?? null,
+      messages: detailedThread.messages,
+      activities: detailedThread.activities,
+    });
+    if (!summary) {
+      return;
+    }
+    const completedMessages = detailedThread.messages.filter(
+      (message) => !message.streaming && message.text.trim().length > 0,
+    );
+    const coveredMessage = completedMessages.at(-1) ?? null;
+    const createdAt = existingMemory?.createdAt ?? input.createdAt;
+    yield* projectionThreadMemoryRepository.upsert({
+      threadId: input.threadId,
+      summary,
+      coveredMessageId: coveredMessage?.id ?? null,
+      coveredUpdatedAt: coveredMessage?.updatedAt ?? null,
+      recentMessageCount: completedMessages.length,
+      tokenEstimate: estimateThreadMemoryTokens(summary),
+      sourceProviderInstanceId: detailedThread.session?.providerInstanceId ?? null,
+      sourceModel: modelSelectionModel(detailedThread.modelSelection),
+      createdAt,
+      updatedAt: input.createdAt,
+    });
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: CommandId.make(`provider:thread-memory-compaction:${crypto.randomUUID()}`),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.make(crypto.randomUUID()),
+        tone: "info",
+        kind: "context-compaction",
+        summary: "Context compacted",
+        payload: {
+          state: "compacted",
+          detail: "Persisted conversation memory for future provider sessions.",
+        },
+        turnId: null,
+        createdAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
   });
 
   const rememberAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>
@@ -1683,6 +1757,15 @@ const make = Effect.gen(function* () {
             updatedAt: now,
           });
         }
+
+        yield* maybeCompactThreadMemory({ threadId: thread.id, createdAt: now }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider runtime ingestion failed to compact thread memory", {
+              threadId: thread.id,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
       }
 
       if (event.type === "session.exited") {
@@ -1824,4 +1907,7 @@ const make = Effect.gen(function* () {
 export const ProviderRuntimeIngestionLive = Layer.effect(
   ProviderRuntimeIngestionService,
   make,
-).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+  Layer.provide(ProjectionThreadMemoryRepositoryLive),
+);

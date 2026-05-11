@@ -31,6 +31,9 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { ProjectionThreadMemoryRepository } from "../../persistence/Services/ProjectionThreadMemory.ts";
+import { ProjectionThreadMemoryRepositoryLive } from "../../persistence/Layers/ProjectionThreadMemory.ts";
+import { buildThreadMemoryContext, hasUsableProviderResumeCursor } from "../ThreadMemory.ts";
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -175,6 +178,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const projectionThreadMemoryRepository = yield* ProjectionThreadMemoryRepository;
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
     timeToLive: HANDLED_TURN_START_KEY_TTL,
@@ -516,6 +520,11 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
+    const activeSessionBeforeEnsure = yield* providerService
+      .listSessions()
+      .pipe(
+        Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
+      );
     yield* ensureSessionForThread(
       input.threadId,
       input.createdAt,
@@ -531,6 +540,24 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
       );
+    const memory = yield* projectionThreadMemoryRepository
+      .getByThreadId({ threadId: input.threadId })
+      .pipe(Effect.map(Option.getOrNull));
+    const restoredContext =
+      activeSessionBeforeEnsure === undefined &&
+      !hasUsableProviderResumeCursor(activeSession?.resumeCursor)
+        ? buildThreadMemoryContext({
+            memory,
+            messages: thread.messages,
+            currentMessageId:
+              thread.messages.find(
+                (message) =>
+                  message.role === "user" &&
+                  message.text === input.messageText &&
+                  message.createdAt === input.createdAt,
+              )?.id ?? "",
+          })
+        : undefined;
     const sessionModelSwitch =
       activeSession === undefined
         ? "in-session"
@@ -560,6 +587,7 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(restoredContext !== undefined ? { context: restoredContext } : {}),
     };
   });
 
@@ -1004,4 +1032,6 @@ const make = Effect.gen(function* () {
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make);
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
+  Layer.provide(ProjectionThreadMemoryRepositoryLive),
+);

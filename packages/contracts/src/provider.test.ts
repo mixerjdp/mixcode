@@ -151,6 +151,27 @@ describe("ProviderSendTurnInput", () => {
     expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("ultrathink");
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
   });
+
+  it("accepts restored conversation context", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      input: "que hemos platicado?",
+      context: {
+        conversationSummary: "El usuario pidio revisar memoria entre sesiones.",
+        recentMessages: [
+          {
+            role: "user",
+            text: "holi hola cuentame un chiste",
+            createdAt: "2026-05-11T00:00:00.000Z",
+          },
+        ],
+        restoredFromMemory: true,
+      },
+    });
+
+    expect(parsed.context?.restoredFromMemory).toBe(true);
+    expect(parsed.context?.recentMessages?.[0]?.role).toBe("user");
+  });
 });
 
 describe("providerInstanceId routing key (slice-2 invariant)", () => {

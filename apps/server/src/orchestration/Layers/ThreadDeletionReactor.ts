@@ -3,6 +3,8 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { Cause, Effect, Layer, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProjectionThreadMemoryRepository } from "../../persistence/Services/ProjectionThreadMemory.ts";
+import { ProjectionThreadMemoryRepositoryLive } from "../../persistence/Layers/ProjectionThreadMemory.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -37,6 +39,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager;
+  const projectionThreadMemoryRepository = yield* ProjectionThreadMemoryRepository;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -52,12 +55,20 @@ const make = Effect.gen(function* () {
       threadId,
     });
 
+  const deleteThreadMemory = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    logCleanupCauseUnlessInterrupted({
+      effect: projectionThreadMemoryRepository.deleteByThreadId({ threadId }),
+      message: "thread deletion cleanup skipped thread memory delete",
+      threadId,
+    });
+
   const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
+    yield* deleteThreadMemory(threadId);
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>
@@ -93,4 +104,6 @@ const make = Effect.gen(function* () {
   } satisfies ThreadDeletionReactorShape;
 });
 
-export const ThreadDeletionReactorLive = Layer.effect(ThreadDeletionReactor, make);
+export const ThreadDeletionReactorLive = Layer.effect(ThreadDeletionReactor, make).pipe(
+  Layer.provide(ProjectionThreadMemoryRepositoryLive),
+);

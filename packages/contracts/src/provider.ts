@@ -11,6 +11,7 @@ import {
 import {
   ChatAttachment,
   ModelSelection,
+  OrchestrationMessageRole,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderApprovalDecision,
@@ -64,6 +65,20 @@ export const ProviderSessionStartInput = Schema.Struct({
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
+export const ProviderTurnRecentMessage = Schema.Struct({
+  role: OrchestrationMessageRole,
+  text: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type ProviderTurnRecentMessage = typeof ProviderTurnRecentMessage.Type;
+
+export const ProviderTurnContext = Schema.Struct({
+  conversationSummary: Schema.optional(TrimmedNonEmptyString),
+  recentMessages: Schema.optional(Schema.Array(ProviderTurnRecentMessage)),
+  restoredFromMemory: Schema.Boolean,
+});
+export type ProviderTurnContext = typeof ProviderTurnContext.Type;
+
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
   input: Schema.optional(
@@ -74,6 +89,7 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  context: Schema.optional(ProviderTurnContext),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ProviderTurnContext,
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
@@ -99,6 +100,27 @@ export interface OpenCodeAdapterLiveOptions {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function buildRestoredContextPrompt(context: ProviderTurnContext | undefined): string | undefined {
+  if (!context) {
+    return undefined;
+  }
+  const sections = [
+    "Contexto restaurado de esta conversacion anterior.",
+    "Usa este contexto como memoria de continuidad. No digas que es una conversacion nueva si el usuario pregunta que han hablado.",
+    context.conversationSummary ? `Resumen:\n${context.conversationSummary}` : undefined,
+    context.recentMessages && context.recentMessages.length > 0
+      ? [
+          "Mensajes recientes:",
+          ...context.recentMessages.map(
+            (message) => `${message.role} (${message.createdAt}): ${message.text}`,
+          ),
+        ].join("\n")
+      : undefined,
+  ].filter((entry): entry is string => entry !== undefined && entry.trim().length > 0);
+
+  return sections.length > 0 ? sections.join("\n\n") : undefined;
 }
 
 /**
@@ -298,6 +320,54 @@ function textFromPart(part: Part): string | undefined {
 
 function hasRenderableAssistantTextPart(parts: ReadonlyArray<Part>): boolean {
   return parts.some((part) => part.type === "text" && part.text.trim().length > 0);
+}
+
+function hasIncompleteToolPart(parts: ReadonlyArray<Part>): boolean {
+  return parts.some(
+    (part) =>
+      part.type === "tool" && (part.state.status === "pending" || part.state.status === "running"),
+  );
+}
+
+function turnReconciliationFingerprint(
+  messages: ReadonlyArray<{
+    readonly info: {
+      readonly id: string;
+      readonly role: "assistant" | "user";
+      readonly time?: {
+        readonly created?: number;
+        readonly completed?: number;
+      };
+    };
+    readonly parts: ReadonlyArray<Part>;
+  }>,
+): string {
+  return JSON.stringify(
+    messages.map((message) => ({
+      id: message.info.id,
+      completed: message.info.time?.completed ?? null,
+      parts: message.parts.map((part) => {
+        if (part.type === "tool") {
+          return {
+            id: part.id,
+            type: part.type,
+            tool: part.tool,
+            status: part.state.status,
+            title: "title" in part.state ? part.state.title : undefined,
+            outputLength: "output" in part.state ? part.state.output.length : 0,
+            errorLength: "error" in part.state ? part.state.error.length : 0,
+          };
+        }
+        return {
+          id: part.id,
+          type: part.type,
+          textLength: textFromPart(part)?.length ?? 0,
+          textEnd:
+            part.type === "text" || part.type === "reasoning" ? (part.time?.end ?? null) : null,
+        };
+      }),
+    })),
+  );
 }
 
 function commonPrefixLength(left: string, right: string): number {
@@ -734,17 +804,19 @@ export function makeOpenCodeAdapter(
           limit: 20,
         }),
       ).pipe(Effect.mapError(toRequestError));
-      const completedAssistantMessages = (messages.data ?? [])
+      const assistantMessages = (messages.data ?? [])
         .filter(
-          (entry) =>
-            entry.info.role === "assistant" &&
-            entry.info.time.completed !== undefined &&
-            entry.info.time.created >= turnStartedAt,
+          (entry) => entry.info.role === "assistant" && entry.info.time.created >= turnStartedAt,
         )
         .toSorted((left, right) => left.info.time.created - right.info.time.created);
+      const completedAssistantMessages = assistantMessages.filter(
+        (entry) => "completed" in entry.info.time && entry.info.time.completed !== undefined,
+      );
       let hasRenderableAssistantText = false;
-      for (const entry of completedAssistantMessages) {
+      let hasIncompleteToolCall = false;
+      for (const entry of assistantMessages) {
         hasRenderableAssistantText ||= hasRenderableAssistantTextPart(entry.parts);
+        hasIncompleteToolCall ||= hasIncompleteToolPart(entry.parts);
         yield* emitAssistantMessageSnapshot(
           context,
           {
@@ -755,7 +827,28 @@ export function makeOpenCodeAdapter(
           entry,
         );
       }
-      return hasRenderableAssistantText;
+      return {
+        hasRenderableAssistantText,
+        hasIncompleteToolCall,
+        fingerprint: turnReconciliationFingerprint(completedAssistantMessages),
+      };
+    });
+
+    const readOpenCodeSessionStatus = Effect.fn("readOpenCodeSessionStatus")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      const response = yield* runOpenCodeSdk("session.status", () =>
+        context.client.session.status({
+          directory: context.directory,
+        }),
+      ).pipe(Effect.mapError(toRequestError));
+      const statuses = response.data ?? {};
+      const directStatus = statuses[context.openCodeSessionId]?.type;
+      if (directStatus) {
+        return directStatus;
+      }
+      const statusValues = Object.values(statuses);
+      return statusValues.length === 1 ? statusValues[0]?.type : undefined;
     });
 
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
@@ -1293,7 +1386,12 @@ export function makeOpenCodeAdapter(
         });
       }
 
+      const restoredContextPrompt = buildRestoredContextPrompt(input.context);
       const text = input.input?.trim();
+      const textParts = [
+        ...(restoredContextPrompt ? [{ type: "text" as const, text: restoredContextPrompt }] : []),
+        ...(text ? [{ type: "text" as const, text }] : []),
+      ];
       const fileParts = toOpenCodeFileParts({
         attachments: input.attachments,
         resolveAttachmentPath: (attachment) =>
@@ -1342,7 +1440,7 @@ export function makeOpenCodeAdapter(
           model: parsedModel,
           ...(context.activeAgent ? { agent: context.activeAgent } : {}),
           ...(context.activeVariant ? { variant: context.activeVariant } : {}),
-          parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+          parts: [...textParts, ...fileParts],
         }),
       ).pipe(
         Effect.mapError(toRequestError),
@@ -1383,13 +1481,31 @@ export function makeOpenCodeAdapter(
         if (yield* Ref.get(context.stopped)) {
           return;
         }
+        let lastStableFingerprint: string | undefined;
+        let stablePolls = 0;
         while (context.activeTurnId === turnId) {
-          const hasRenderableAssistantText = yield* reconcileCompletedAssistantMessagesForTurn(
+          const reconciliation = yield* reconcileCompletedAssistantMessagesForTurn(
             context,
             turnId,
             context.turnStartedAt ?? turnStartedAt,
           );
-          if (hasRenderableAssistantText) {
+          const sessionStatus = yield* readOpenCodeSessionStatus(context).pipe(
+            Effect.catchCause(() => Effect.void),
+          );
+          if (reconciliation.fingerprint === lastStableFingerprint) {
+            stablePolls += 1;
+          } else {
+            lastStableFingerprint = reconciliation.fingerprint;
+            stablePolls = 1;
+          }
+          const shouldCompleteFromStatus =
+            sessionStatus === "idle" && reconciliation.hasRenderableAssistantText;
+          const shouldCompleteFromStableSnapshot =
+            sessionStatus === undefined &&
+            reconciliation.hasRenderableAssistantText &&
+            !reconciliation.hasIncompleteToolCall &&
+            stablePolls >= 6;
+          if (shouldCompleteFromStatus || shouldCompleteFromStableSnapshot) {
             context.activeTurnId = undefined;
             context.turnStartedAt = undefined;
             context.activeAgent = undefined;

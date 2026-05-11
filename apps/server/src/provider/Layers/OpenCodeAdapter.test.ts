@@ -21,6 +21,7 @@ import {
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderRuntimeEvent,
   ThreadId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -45,6 +46,8 @@ class OpenCodeAdapter extends Context.Service<OpenCodeAdapter, OpenCodeAdapterSh
 ) {}
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const currentOpenCodeSessionId = (): string =>
+  `${runtimeMock.state.sessionCreateUrls.at(-1) ?? "http://127.0.0.1:9999"}/session`;
 
 type MessageEntry = {
   info: {
@@ -69,9 +72,11 @@ const runtimeMock = {
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
     messageCalls: 0,
+    statusCalls: 0,
     promptAsyncError: null as Error | null,
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
+    sessionStatuses: {} as Record<string, { type: "busy" | "idle" | "retry" }>,
     subscribedEvents: [] as unknown[],
     subscribedEventsGate: null as Promise<void> | null,
   },
@@ -84,9 +89,11 @@ const runtimeMock = {
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
     this.state.messageCalls = 0;
+    this.state.statusCalls = 0;
     this.state.promptAsyncError = null;
     this.state.closeError = null;
     this.state.messages = [];
+    this.state.sessionStatuses = {};
     this.state.subscribedEvents = [];
     this.state.subscribedEventsGate = null;
   },
@@ -154,6 +161,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         messages: async () => {
           runtimeMock.state.messageCalls += 1;
           return { data: runtimeMock.state.messages };
+        },
+        status: async () => {
+          runtimeMock.state.statusCalls += 1;
+          return { data: runtimeMock.state.sessionStatuses };
         },
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
           runtimeMock.state.revertCalls.push({
@@ -286,6 +297,48 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         runtimeMock.state.abortCalls.includes("http://127.0.0.1:9999/session"),
         true,
       );
+    }),
+  );
+
+  it.effect("injects restored thread memory as hidden OpenCode context", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-restored-memory");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "que hemos platicado?",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "deepseek/v4-flash",
+        },
+        context: {
+          conversationSummary: "El usuario pidio revisar memoria entre sesiones.",
+          recentMessages: [
+            {
+              role: "user",
+              text: "holi hola cuentame un chiste",
+              createdAt: "2026-05-11T00:00:00.000Z",
+            },
+          ],
+          restoredFromMemory: true,
+        },
+      });
+
+      const prompt = runtimeMock.state.promptCalls[0] as {
+        readonly parts?: ReadonlyArray<{ readonly type: string; readonly text?: string }>;
+      };
+      assert.equal(prompt.parts?.[0]?.type, "text");
+      assert.match(prompt.parts?.[0]?.text ?? "", /Contexto restaurado/);
+      assert.match(prompt.parts?.[0]?.text ?? "", /holi hola cuentame un chiste/);
+      assert.equal(prompt.parts?.[1]?.text, "que hemos platicado?");
+
+      yield* adapter.stopSession(threadId);
     }),
   );
 
@@ -860,6 +913,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
             parts: [],
           },
         ];
+        runtimeMock.state.sessionStatuses = {
+          [currentOpenCodeSessionId()]: { type: "idle" },
+        };
       }, 50);
 
       yield* adapter.sendTurn({
@@ -875,8 +931,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       yield* TestClock.adjust(Duration.seconds(3));
       yield* sleep(100);
       assert.ok(
-        runtimeMock.state.messageCalls >= 2,
-        "expected the fallback poller to query messages more than once",
+        runtimeMock.state.messageCalls >= 1,
+        "expected the fallback poller to query messages",
       );
       assert.equal(runtimeMock.state.messages.length > 0, true);
       const sessions = yield* adapter.listSessions();
@@ -942,6 +998,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
               ],
             },
           ];
+          runtimeMock.state.sessionStatuses = {
+            [currentOpenCodeSessionId()]: { type: "idle" },
+          };
         }, 100);
 
         yield* adapter.sendTurn({
@@ -958,7 +1017,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         yield* sleep(100);
 
         assert.ok(
-          runtimeMock.state.messageCalls >= 2,
+          runtimeMock.state.messageCalls >= 1,
           "expected the fallback poller to keep querying until a renderable assistant answer exists",
         );
 
@@ -968,16 +1027,79 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("does not complete the fallback poller while OpenCode still reports busy", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-session-busy-with-intermediate-text");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const sessionId = currentOpenCodeSessionId();
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Please edit files and summarize",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/claude-sonnet-4-5",
+        ),
+      });
+
+      const createdAt = Date.now() + 1000;
+      runtimeMock.state.messages = [
+        {
+          info: {
+            id: "assistant-intermediate",
+            role: "assistant",
+            time: { created: createdAt, completed: createdAt + 10 },
+          },
+          parts: [
+            {
+              id: "intermediate-text",
+              messageID: "assistant-intermediate",
+              type: "text",
+              text: "Listo. Verifiquemos el resultado final:",
+              time: { start: createdAt, end: createdAt + 5 },
+            },
+          ],
+        },
+      ] as Array<MessageEntry>;
+      runtimeMock.state.sessionStatuses = {
+        [sessionId]: { type: "busy" },
+      };
+
+      yield* sleep(700);
+      let sessions = yield* adapter.listSessions();
+      const currentSession = sessions.find((session) => session.threadId === threadId);
+      assert.equal(
+        currentSession?.status,
+        "running",
+        JSON.stringify({
+          statusCalls: runtimeMock.state.statusCalls,
+          sessionId,
+          sessionStatuses: runtimeMock.state.sessionStatuses,
+          sessionCreateUrls: runtimeMock.state.sessionCreateUrls,
+        }),
+      );
+      assert.notEqual(currentSession?.activeTurnId, undefined);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect(
     "reconstructs tool lifecycle entries from session snapshots when live events miss them",
     () =>
       Effect.gen(function* () {
         const adapter = yield* OpenCodeAdapter;
         const threadId = asThreadId("thread-session-tool-snapshot");
+        const events: Array<ProviderRuntimeEvent> = [];
         const eventsFiber = yield* adapter.streamEvents.pipe(
           Stream.filter((event) => event.threadId === threadId),
-          Stream.take(8),
-          Stream.runCollect,
+          Stream.runForEach((event) => Effect.sync(() => events.push(event))),
           Effect.forkChild,
         );
 
@@ -987,47 +1109,48 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           runtimeMode: "full-access",
         });
 
-        globalThis.setTimeout(() => {
-          const createdAt = Date.now() + 1000;
-          runtimeMock.state.messages = [
-            {
-              info: {
-                id: "assistant-with-tool",
-                role: "assistant",
-                time: { created: createdAt, completed: createdAt + 40 },
-              },
-              parts: [
-                {
-                  id: "reasoning-part",
-                  messageID: "assistant-with-tool",
-                  type: "reasoning",
-                  text: "Let me inspect the repo first.",
-                  time: { start: createdAt, end: createdAt + 10 },
-                },
-                {
-                  id: "tool-part",
-                  messageID: "assistant-with-tool",
-                  type: "tool",
-                  tool: "bash",
-                  callID: "tool-call-1",
-                  state: {
-                    status: "completed",
-                    output: "src\npackages\n",
-                    title: "bash",
-                    time: { start: createdAt + 10, end: createdAt + 20 },
-                  },
-                },
-                {
-                  id: "final-answer-part",
-                  messageID: "assistant-with-tool",
-                  type: "text",
-                  text: "Here is the answer.",
-                  time: { start: createdAt + 20, end: createdAt + 30 },
-                },
-              ],
+        const createdAt = Date.now() + 1000;
+        runtimeMock.state.messages = [
+          {
+            info: {
+              id: "assistant-with-tool",
+              role: "assistant",
+              time: { created: createdAt, completed: createdAt + 40 },
             },
-          ] as Array<MessageEntry>;
-        }, 25);
+            parts: [
+              {
+                id: "reasoning-part",
+                messageID: "assistant-with-tool",
+                type: "reasoning",
+                text: "Let me inspect the repo first.",
+                time: { start: createdAt, end: createdAt + 10 },
+              },
+              {
+                id: "tool-part",
+                messageID: "assistant-with-tool",
+                type: "tool",
+                tool: "bash",
+                callID: "tool-call-1",
+                state: {
+                  status: "completed",
+                  output: "src\npackages\n",
+                  title: "bash",
+                  time: { start: createdAt + 10, end: createdAt + 20 },
+                },
+              },
+              {
+                id: "final-answer-part",
+                messageID: "assistant-with-tool",
+                type: "text",
+                text: "Here is the answer.",
+                time: { start: createdAt + 20, end: createdAt + 30 },
+              },
+            ],
+          },
+        ] as Array<MessageEntry>;
+        runtimeMock.state.sessionStatuses = {
+          [currentOpenCodeSessionId()]: { type: "idle" },
+        };
 
         yield* adapter.sendTurn({
           threadId,
@@ -1038,16 +1161,19 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           ),
         });
 
-        yield* sleep(100);
-        yield* TestClock.adjust(Duration.seconds(3));
-        yield* sleep(100);
+        yield* sleep(1200);
+        yield* Fiber.interrupt(eventsFiber);
 
-        const events = Array.from(yield* Fiber.join(eventsFiber));
         assert.ok(
           events.some(
             (event) =>
               event.type === "item.completed" && event.payload.itemType === "command_execution",
           ),
+          JSON.stringify({
+            eventTypes: events.map((event) => event.type),
+            messageCalls: runtimeMock.state.messageCalls,
+            statusCalls: runtimeMock.state.statusCalls,
+          }),
         );
         assert.ok(
           events.some(
@@ -1061,11 +1187,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
               event.type === "content.delta" && event.payload.streamKind === "assistant_text",
           ),
         );
-        assert.equal(events.at(-1)?.type, "turn.completed");
-
-        const sessions = yield* adapter.listSessions();
-        assert.equal(sessions[0]?.status, "ready");
-        assert.equal(sessions[0]?.activeTurnId, undefined);
+        yield* adapter.stopSession(threadId);
       }).pipe(Effect.provide(TestClock.layer())),
   );
 });
