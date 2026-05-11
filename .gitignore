@@ -25,3 +25,6 @@ squashfs-root/
 .vercel
 dist-electron/
 .electron-runtime/
+.tmp/
+apps/server/userdata/
+userdata/
