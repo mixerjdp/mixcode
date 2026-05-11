@@ -3,6 +3,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer } from "effect";
 
 import { toPersistenceSqlError } from "../Errors.ts";
+import { ensureProjectionThreadMemorySchema } from "../Migrations/030_ProjectionThreadMemory.ts";
 import {
   DeleteProjectionThreadMemoryInput,
   GetProjectionThreadMemoryInput,
@@ -13,6 +14,9 @@ import {
 
 const makeProjectionThreadMemoryRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  yield* ensureProjectionThreadMemorySchema.pipe(
+    Effect.mapError(toPersistenceSqlError("ProjectionThreadMemoryRepository.ensureSchema")),
+  );
 
   const upsertProjectionThreadMemoryRow = SqlSchema.void({
     Request: ProjectionThreadMemory,

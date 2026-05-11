@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-export default Effect.gen(function* () {
+export const ensureProjectionThreadMemorySchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`
@@ -24,3 +24,5 @@ export default Effect.gen(function* () {
     ON projection_thread_memory(updated_at)
   `;
 });
+
+export default ensureProjectionThreadMemorySchema;
